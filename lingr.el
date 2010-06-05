@@ -68,6 +68,7 @@
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-s") 'lingr-say-command)
     (define-key map (kbd "C-c C-b") 'lingr-switch-room)
+    (define-key map (kbd "C-c C-p") 'lingr-get-before-archive)
     (define-key map (kbd "u") 'lingr-say-command)
     (define-key map (kbd "r") 'lingr-switch-room)
     map)
@@ -85,6 +86,7 @@
 (defvar lingr-say-winconf nil)
 (defvar lingr-say-window-height-per 20)
 (defvar lingr-say-buffer "*Lingr Say*")
+(defvar lingr-get-before-limit 30)
 
 ;;;; Utility Macro
 (defmacro lingr-aif (test-form then-form &rest else-forms)
@@ -152,6 +154,7 @@
 (defun lingr-response-counter (json) (assoc-default 'counter json))
 (defun lingr-response-events (json) (assoc-default 'events json))
 (defun lingr-response-rooms (json) (assoc-default 'rooms json))
+(defun lingr-response-messages (json) (assoc-default 'messages json))
 
 (defun lingr-roominfo-id (roominfo) (assoc-default 'id roominfo))
 (defun lingr-roominfo-messages (roominfo) (assoc-default 'messages roominfo))
@@ -167,6 +170,7 @@
 (defun lingr-message-text (message) (assoc-default 'text message))
 (defun lingr-message-room (message) (assoc-default 'room message))
 (defun lingr-message-timestamp (message) (assoc-default 'timestamp message))
+(defun lingr-message-id (message) (assoc-default 'id message))
 
 (defun lingr-presence-text (presence) (assoc-default 'text presence))
 (defun lingr-presence-room (presence) (assoc-default 'room presence))
@@ -203,13 +207,12 @@
                       `(("session" . ,it) ("room" . ,room))
                       'lingr-api-room-show-callback t (list it))))
 
-(defun lingr-api-get-archives (session room max_message_id)
-  (let ((limit "100"))
-    (lingr-aif (lingr-session-id session)
-        (lingr-http-get "room/get_archives"
-                        `(("session" . ,it) ("room" . ,room)
-                          ("before" . ,max_message_id) ("limit" . ,limit))
-                        nil t))))
+(defun lingr-api-get-archives (session room max_message_id &optional limit)
+  (lingr-aif (lingr-session-id session)
+      (lingr-http-get "room/get_archives"
+                      `(("session" . ,it) ("room" . ,room)
+                        ("before" . ,max_message_id) ("limit" . ,(number-to-string (or limit lingr-get-before-limit))))
+                      'lingr-api-get-archives-callback t (list it room))))
 
 (defun lingr-api-subscribe (session room &optional reset)
   (lingr-aif (lingr-session-id session)
@@ -244,8 +247,7 @@
 
 (defun lingr-api-room-show-callback (json &rest args)
   (setq lingr-http-response-json json)
-  (when (and lingr-session-data
-             (string-equal (lingr-session-id lingr-session-data) (car-safe args)))
+  (when (lingr-current-session-p (car args))
     (lingr-refresh-rooms json)
     (switch-to-buffer (lingr-room-buffer (car lingr-room-list)))))
 
@@ -256,8 +258,7 @@
 (defun lingr-api-observe-callback (json &rest args)
   (setq lingr-http-response-json json)
   (lingr-debug-observe-log json)
-  (when (and lingr-session-data
-             (string-equal (lingr-session-id lingr-session-data) (car args))
+  (when (and (lingr-current-session-p (car args))
              (eq lingr-subscribe-counter (cadr args)))
     (lingr-aif (lingr-response-counter json)
         (setq lingr-subscribe-counter it))
@@ -268,6 +269,20 @@
             (lingr-show-update-summay updates))))
     (unless lingr-logout-session-flg
       (lingr-api-observe lingr-session-data))))
+
+(defun lingr-api-get-archives-callback (json &rest args)
+  (setq lingr-http-response-json json)
+  (when (lingr-current-session-p (car args))
+    (with-current-buffer (lingr-get-room-buffer (cadr args))
+      (goto-char (point-min))
+      (let ((buffer-read-only nil))
+        (save-excursion
+          (insert (concat (make-string (window-width) ?-) "\n")))) ;separete mark
+      (loop for message across (lingr-response-messages json)
+            do
+            (lingr-decode-message-text message)
+            (let ((buffer-read-only nil))
+              (lingr-insert-message message))))))
 
 ;;;; Utility function
 (defmacro lingr-update-with-buffer (buffer &rest body)
@@ -285,6 +300,10 @@
     (when (search-forward "\n\n" nil t)
       (json-read-from-string (buffer-substring-no-properties (point) (point-max))))))
 
+(defun lingr-current-session-p (session-id)
+  (and lingr-session-data
+       (string-equal (lingr-session-id lingr-session-data) session-id)))
+
 (defun lingr-event-type (event)
   (cond ((lingr-event-message event) 'message)
         ((lingr-event-presence event) 'presence)
@@ -301,13 +320,16 @@
   (format-time-string "[%x %T]" (apply 'encode-time (parse-time-string (timezone-make-date-arpa-standard timestamp)))))
 
 (defun lingr-insert-message (message)
-  (let* ((nick (lingr-message-nick message))
+  (let* ((beg-pos (point))
+         (nick (lingr-message-nick message))
          (nick-str (concat nick (make-string (max (- 12 (string-width nick)) 0) ? )))
          (text (lingr-message-text message))
          (time-str (lingr-decode-timestamp (lingr-message-timestamp message))))
     (insert (format "%s%s: %s\n"
                     time-str nick-str
-                    (replace-regexp-in-string "\n" (concat "\n" (make-string (+ (string-width (concat time-str nick-str)) 2) ? )) text)))))
+                    (replace-regexp-in-string "\n" (concat "\n" (make-string (+ (string-width (concat time-str nick-str)) 2) ? )) text)))
+    (put-text-property beg-pos (+ beg-pos (length time-str) (length nick-str))
+                       'lingr-mes-id (lingr-message-id message))))
 
 (defun lingr-refresh-rooms (json)
   (setq lingr-room-list
@@ -449,6 +471,13 @@ Special commands:
   (interactive)
   (lingr-aif (mapcar (lambda (room) (car room)) lingr-room-list)
       (lingr-api-room-show lingr-session-data (mapconcat 'identity it ","))))
+
+(defun lingr-get-before-archive (&optional limit)
+  (interactive "P")
+  (when lingr-buffer-room-id
+    (lingr-api-get-archives lingr-session-data lingr-buffer-room-id
+                            (get-text-property (point-min) 'lingr-mes-id)
+                            (if (and (numberp limit) (> limit 0)) limit nil))))
 
 ;;;; Debug Utility
 (defvar lingr-debug nil)
