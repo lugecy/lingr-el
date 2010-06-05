@@ -74,6 +74,18 @@
     map)
   "Lingr room mode map.")
 
+(defface lingr-nickname-face
+  '((t (:foreground "cornflower blue")))
+  "Face for nickname.")
+
+(defface lingr-timestamp-face
+  '((t (:foreground "gray50")))
+  "Face for timestamp.")
+
+(defface lingr-presence-event-face
+  '((t (:foreground "gray45")))
+  "Face for presence event.")
+
 (defvar lingr-base-url "http://lingr.com/api/")
 (defvar lingr-observe-base-url "http://lingr.com:8080/api/")
 (defvar lingr-http-response-json nil)
@@ -320,16 +332,19 @@
   (format-time-string "[%x %T]" (apply 'encode-time (parse-time-string (timezone-make-date-arpa-standard timestamp)))))
 
 (defun lingr-insert-message (message)
-  (let* ((beg-pos (point))
-         (nick (lingr-message-nick message))
-         (nick-str (concat nick (make-string (max (- 12 (string-width nick)) 0) ? )))
+  (let* ((nick (lingr-message-nick message))
          (text (lingr-message-text message))
-         (time-str (lingr-decode-timestamp (lingr-message-timestamp message))))
-    (insert (format "%s%s: %s\n"
-                    time-str nick-str
-                    (replace-regexp-in-string "\n" (concat "\n" (make-string (+ (string-width (concat time-str nick-str)) 2) ? )) text)))
-    (put-text-property beg-pos (+ beg-pos (length time-str) (length nick-str))
-                       'lingr-mes-id (lingr-message-id message))))
+         (time-str (lingr-decode-timestamp (lingr-message-timestamp message)))
+         (fill-str (make-string 2 ? )))
+    (setq time-str (propertize time-str 'face 'lingr-timestamp-face))
+    (setq nick (propertize nick
+                           'face 'lingr-nickname-face
+                           'lingr-mes-id (lingr-message-id message)))
+    (insert (format "%-20s %s:\n%s\n"
+                    nick time-str
+                    (concat fill-str
+                            (mapconcat 'identity (split-string text "\n")
+                                       (concat "\n" fill-str)))))))
 
 (defun lingr-refresh-rooms (json)
   (setq lingr-room-list
@@ -365,7 +380,8 @@
        (lingr-update-with-buffer (lingr-get-room-buffer (lingr-presence-room presence))
          (let ((timestamp (lingr-presence-timestamp presence))
                (text (lingr-presence-text presence)))
-           (insert (format "%s%s\n" (lingr-decode-timestamp timestamp) text))))
+           (insert (propertize (format "%s  %s\n" text (lingr-decode-timestamp timestamp))
+                               'face 'lingr-presence-event-face))))
        (list 'presence (lingr-presence-room presence))))
     (t nil)))
 
