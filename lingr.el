@@ -69,6 +69,7 @@
     (define-key map (kbd "C-c C-s") 'lingr-say-command)
     (define-key map (kbd "C-c C-b") 'lingr-switch-room)
     (define-key map (kbd "C-c C-p") 'lingr-get-before-archive)
+    (define-key map (kbd "C-c C-l") 'lingr-refresh-room)
     (define-key map (kbd "u") 'lingr-say-command)
     (define-key map (kbd "r") 'lingr-switch-room)
     map)
@@ -496,6 +497,11 @@ Special commands:
     (lingr-api-get-archives lingr-session-data lingr-buffer-room-id
                             (get-text-property (point-min) 'lingr-mes-id)
                             (if (and (numberp limit) (> limit 0)) limit nil))))
+
+(defun lingr-refresh-room ()
+  (interactive)
+  (when lingr-buffer-room-id
+    (lingr-api-room-show lingr-session-data lingr-buffer-room-id)))
 
 ;;;; Debug Utility
 (defvar lingr-debug nil)
