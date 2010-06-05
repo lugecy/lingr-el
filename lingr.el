@@ -154,7 +154,8 @@
     (error "GET/POST fail."))
   (let ((json (lingr-get-json-data))
         (buffer (current-buffer)))
-    (unless (equal (assoc-default 'status json) "ok")
+    (unless (equal (lingr-response-status json) "ok")
+      (lingr-debug-observe-log (list 'Error status func args json))
       (error "Lingr API Error: %s" json))
     (kill-buffer buffer)
     (apply func (cons json args))))
@@ -163,6 +164,7 @@
 (defun lingr-session-id (session) (assoc-default 'session session))
 (defun lingr-session-nick (session) (assoc-default 'nickname session))
 
+(defun lingr-response-status (json) (assoc-default 'status json))
 (defun lingr-response-counter (json) (assoc-default 'counter json))
 (defun lingr-response-events (json) (assoc-default 'events json))
 (defun lingr-response-rooms (json) (assoc-default 'rooms json))
