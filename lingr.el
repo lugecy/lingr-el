@@ -110,7 +110,9 @@
 
 (defun lingr-http-session (method url args &optional callback async cbargs)
   (let* ((data-string (mapconcat (lambda (arg)
-                                   (concat (car arg) "=" (cdr arg)))
+                                   (concat (url-hexify-string (car arg))
+                                           "="
+                                           (url-hexify-string (cdr arg))))
                                  args
                                  "&"))
          (response-callback (or callback 'lingr-default-callback))
