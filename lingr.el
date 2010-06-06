@@ -304,9 +304,8 @@
   `(when (buffer-live-p ,buffer)
      (with-current-buffer ,buffer
        (goto-char (point-max))
-       (setq buffer-read-only nil)
-       ,@body
-       (setq buffer-read-only t))))
+       (let ((buffer-read-only nil))
+         ,@body))))
 
 (defun lingr-get-json-data ()
   (save-excursion
@@ -365,15 +364,14 @@
         do
         (with-current-buffer (lingr-get-room-buffer (lingr-roominfo-id roominfo))
           (lingr-room-mode)
-          (setq buffer-read-only nil)
-          (erase-buffer)
           (setq lingr-buffer-room-id (lingr-roominfo-id roominfo))
-          (goto-char (point-min))
-          (loop for message across (lingr-roominfo-messages roominfo)
-                do
-                (lingr-decode-message-text message)
-                (lingr-insert-message message))
-          (setq buffer-read-only t))))
+          (let ((buffer-read-only nil))
+            (erase-buffer)
+            (goto-char (point-min))
+            (loop for message across (lingr-roominfo-messages roominfo)
+                  do
+                  (lingr-decode-message-text message)
+                  (lingr-insert-message message))))))
 
 (defun lingr-update-by-event (event)
   (case (lingr-event-type event)
@@ -411,7 +409,8 @@ Special commands:
 \\{lingr-room-map}"
   (kill-all-local-variables)
   (setq major-mode 'lingr-room-mode
-        mode-name "Lingr-Room")
+        mode-name "Lingr-Room"
+        buffer-read-only t)
   (make-local-variable 'lingr-buffer-room-id)
   (use-local-map lingr-room-map))
 
