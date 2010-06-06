@@ -217,9 +217,10 @@
 
 (defun lingr-api-room-show (session room)
   (lingr-aif (lingr-session-id session)
-      (lingr-http-get "room/show"
-                      `(("session" . ,it) ("room" . ,room))
-                      'lingr-api-room-show-callback t (list it))))
+      (let ((single-p (not (string-match "," room))))
+        (lingr-http-get "room/show"
+                        `(("session" . ,it) ("room" . ,room))
+                        'lingr-api-room-show-callback t (list it (if single-p room nil))))))
 
 (defun lingr-api-get-archives (session room max_message_id &optional limit)
   (lingr-aif (lingr-session-id session)
@@ -263,7 +264,7 @@
   (setq lingr-http-response-json json)
   (when (lingr-current-session-p (car args))
     (lingr-refresh-rooms json)
-    (lingr-switch-room (car (lingr-get-room-id-list)))))
+    (lingr-switch-room (or (cadr args) (car (lingr-get-room-id-list))))))
 
 (defun lingr-api-subscribe-callback (json &rest args)
   (setq lingr-http-response-json json)
