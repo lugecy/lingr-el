@@ -311,7 +311,9 @@
   (save-excursion
     (goto-char (point-min))
     (when (search-forward "\n\n" nil t)
-      (json-read-from-string (buffer-substring-no-properties (point) (point-max))))))
+      (let ((json-object-type 'alist) (json-array-type 'vector)
+            (json-key-type nil) (json-false nil))
+        (json-read-from-string (buffer-substring-no-properties (point) (point-max)))))))
 
 (defun lingr-current-session-p (session-id)
   (and lingr-session-data
