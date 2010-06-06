@@ -95,7 +95,7 @@
 (defvar lingr-subscribe-counter nil)
 (defvar lingr-buffer-basename "Lingr")
 (defvar lingr-buffer-room-id nil)
-(defvar lingr-room-list nil)
+(defvar lingr-room-table (make-hash-table :test 'equal))
 (defvar lingr-say-winconf nil)
 (defvar lingr-say-window-height-per 20)
 (defvar lingr-say-buffer "*Lingr Say*")
@@ -176,7 +176,6 @@
 
 (defun lingr-room-id (room) (car room))
 (defun lingr-room-buffer (room) (cadr room))
-(defun lingr-get-room-buffer (room-id) (lingr-room-buffer (assoc room-id lingr-room-list)))
 
 (defun lingr-event-message (event) (assoc-default 'message event))
 (defun lingr-event-presence (event) (assoc-default 'presence event))
@@ -264,7 +263,7 @@
   (setq lingr-http-response-json json)
   (when (lingr-current-session-p (car args))
     (lingr-refresh-rooms json)
-    (switch-to-buffer (lingr-room-buffer (car lingr-room-list)))))
+    (lingr-switch-room (car (lingr-get-room-id-list)))))
 
 (defun lingr-api-subscribe-callback (json &rest args)
   (setq lingr-http-response-json json)
@@ -324,6 +323,18 @@
         ((lingr-event-presence event) 'presence)
         (t nil)))
 
+(defun lingr-get-room-buffer (room-id)
+  (or (lingr-aif (lingr-room-buffer (gethash room-id lingr-room-table))
+          (if (buffer-live-p it) it nil))
+      (let* ((buffer (get-buffer-create (format "%s[%s]" lingr-buffer-basename room-id)))
+             (room (list room-id buffer)))
+        (puthash room-id room lingr-room-table)
+        buffer)))
+
+(defun lingr-get-room-id-list ()
+  (loop for key being the hash-keys in lingr-room-table using (hash-value room)
+        if (buffer-live-p (lingr-room-buffer room)) collect key))
+
 (defun lingr-decode-message-text (message)
   (let ((text-cons (assoc 'text message))
         (nick-cons (assoc 'nickname message)))
@@ -350,25 +361,19 @@
                                        (concat "\n" fill-str)))))))
 
 (defun lingr-refresh-rooms (json)
-  (setq lingr-room-list
-        (loop for roominfo across (lingr-response-rooms json)
-              with room-list
-              do
-              (with-current-buffer (get-buffer-create (format "%s[%s]"
-                                                              lingr-buffer-basename
-                                                              (lingr-roominfo-id roominfo)))
-                (lingr-room-mode)
-                (setq buffer-read-only nil)
-                (erase-buffer)
-                (setq lingr-buffer-room-id (lingr-roominfo-id roominfo))
-                (goto-char (point-min))
-                (loop for message across (lingr-roominfo-messages roominfo)
-                      do
-                      (lingr-decode-message-text message)
-                      (lingr-insert-message message))
-                (setq buffer-read-only t)
-                (push (list (lingr-roominfo-id roominfo) (current-buffer)) room-list))
-              finally return (reverse room-list))))
+  (loop for roominfo across (lingr-response-rooms json)
+        do
+        (with-current-buffer (lingr-get-room-buffer (lingr-roominfo-id roominfo))
+          (lingr-room-mode)
+          (setq buffer-read-only nil)
+          (erase-buffer)
+          (setq lingr-buffer-room-id (lingr-roominfo-id roominfo))
+          (goto-char (point-min))
+          (loop for message across (lingr-roominfo-messages roominfo)
+                do
+                (lingr-decode-message-text message)
+                (lingr-insert-message message))
+          (setq buffer-read-only t))))
 
 (defun lingr-update-by-event (event)
   (case (lingr-event-type event)
@@ -481,14 +486,13 @@ Special commands:
 
 (defun lingr-switch-room (room-id)
   (interactive (list (completing-read "Switch Room: "
-                                      (mapcar (lambda (room) (lingr-room-id room))
-                                              lingr-room-list)
+                                      (lingr-get-room-id-list)
                                       nil t)))
   (switch-to-buffer (lingr-get-room-buffer room-id)))
 
 (defun lingr-refresh-all-room ()
   (interactive)
-  (lingr-aif (mapcar (lambda (room) (car room)) lingr-room-list)
+  (lingr-aif (lingr-get-room-id-list)
       (lingr-api-room-show lingr-session-data (mapconcat 'identity it ","))))
 
 (defun lingr-get-before-archive (&optional limit)
