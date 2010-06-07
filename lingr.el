@@ -91,6 +91,7 @@
 (defvar lingr-observe-base-url "http://lingr.com:8080/api/")
 (defvar lingr-http-response-json nil)
 (defvar lingr-session-data nil)
+(defvar lingr-observe-buffer nil)
 (defvar lingr-logout-session-flg nil)
 (defvar lingr-subscribe-counter nil)
 (defvar lingr-buffer-basename "Lingr")
@@ -252,9 +253,10 @@
 (defun lingr-api-observe (session)
   (lingr-aif (lingr-session-id session)
       (when lingr-subscribe-counter
-        (lingr-http-get "event/observe"
-                        `(("session" . ,it) ("counter" . ,(number-to-string lingr-subscribe-counter)))
-                        'lingr-api-observe-callback t (list it lingr-subscribe-counter)))))
+        (setq lingr-observe-buffer
+              (lingr-http-get "event/observe"
+                              `(("session" . ,it) ("counter" . ,(number-to-string lingr-subscribe-counter)))
+                              'lingr-api-observe-callback t (list it lingr-subscribe-counter))))))
 
 ;;;; Lingr API callback functions
 (defun lingr-default-callback (json &rest args)
@@ -282,6 +284,7 @@
                              collect (lingr-update-by-event event))))
           (when lingr-show-update-notification
             (lingr-show-update-summay updates))))
+    (setq lingr-observe-buffer nil)
     (unless lingr-logout-session-flg
       (lingr-api-observe lingr-session-data))))
 
@@ -510,5 +513,9 @@ Special commands:
       (ignore-errors
         (insert (format "%s | %s\n" (format-time-string "%x %T") (prin1-to-string obj)))
         (goto-char (point-max))))))
+
+(defun lingr-observe-alive ()
+  (and (buffer-live-p lingr-observe-buffer)
+       (get-buffer-process lingr-observe-buffer)))
 
 (provide 'lingr)
