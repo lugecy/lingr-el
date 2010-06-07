@@ -101,6 +101,7 @@
 (defvar lingr-say-winconf nil)
 (defvar lingr-say-window-height-per 20)
 (defvar lingr-say-buffer "*Lingr Say*")
+(defvar lingr-status-buffer "*Lingr Status*")
 (defvar lingr-get-before-limit 30)
 
 ;;;; Utility Macro
@@ -172,12 +173,19 @@
 (defun lingr-response-events (json) (assoc-default 'events json))
 (defun lingr-response-rooms (json) (assoc-default 'rooms json))
 (defun lingr-response-messages (json) (assoc-default 'messages json))
+(defun lingr-presence-username (presence) (assoc-default 'username presence))
+(defun lingr-presence-status (presence) (assoc-default 'status presence))
 
 (defun lingr-get-roster (room-id) (gethash room-id lingr-roster-table))
+(defun lingr-get-roster-member (username roster)
+  (assoc-default username (lingr-roster-members roster)))
 (defun lingr-roster-id (roster) (assoc-default 'id roster))
 (defun lingr-roster-buffer (roster) (assoc-default 'buffer roster))
 (defun lingr-roster-name (roster) (assoc-default 'name roster))
 (defun lingr-roster-members (roster) (assoc-default 'members roster))
+
+(defun lingr-member-name (member) (assoc-default 'name member))
+(defun lingr-member-online-p (member) (assoc-default 'is_online member))
 
 (defun lingr-event-message (event) (assoc-default 'message event))
 (defun lingr-event-presence (event) (assoc-default 'presence event))
@@ -267,6 +275,7 @@
   (setq lingr-http-response-json json)
   (when (lingr-current-session-p (car args))
     (lingr-refresh-rooms json)
+    (lingr-update-status-buffer)
     (lingr-switch-room (or (cadr args) (car (lingr-get-room-id-list))))))
 
 (defun lingr-api-subscribe-callback (json &rest args)
@@ -283,6 +292,7 @@
     (lingr-aif (lingr-response-events json)
         (let ((updates (loop for event across it
                              collect (lingr-update-by-event event))))
+          (lingr-update-status-buffer)
           (when lingr-show-update-notification
             (lingr-show-update-summay updates))))
     (setq lingr-observe-buffer nil)
@@ -364,7 +374,7 @@
       (push (assoc key roominfo) roster))
     (push (cons 'members
                 (loop for member across (assoc-default 'members (assoc-default 'roster roominfo))
-                      collect (cons (assoc-default 'name member) member)))
+                      collect (cons (assoc-default 'username member) member)))
           roster)
     (push (cons 'buffer buffer) roster)
     (puthash room-id roster lingr-roster-table))
@@ -393,13 +403,47 @@
        (list 'message (lingr-message-room message))))
     (presence
      (let ((presence (lingr-event-presence event)))
-       (lingr-update-with-buffer (lingr-get-room-buffer (lingr-presence-room presence))
-         (let ((timestamp (lingr-presence-timestamp presence))
-               (text (lingr-presence-text presence)))
-           (insert (propertize (format "%s  %s\n" text (lingr-decode-timestamp timestamp))
-                               'face 'lingr-presence-event-face))))
+       ;; presence-event is send to only one room.
+       ;; I want update that all rosters that member belongs to.
+       (dolist (room-id (lingr-get-rooms-by-username (lingr-presence-username presence)))
+         (lingr-update-with-buffer (lingr-get-room-buffer room-id)
+           (let ((timestamp (lingr-presence-timestamp presence))
+                 (text (lingr-presence-text presence)))
+             (insert (propertize (format "%s  %s\n" text (lingr-decode-timestamp timestamp))
+                                 'face 'lingr-presence-event-face))))
+         (lingr-update-roster presence room-id))
        (list 'presence (lingr-presence-room presence))))
     (t nil)))
+
+(defun lingr-get-rooms-by-username (username)
+  (loop for room-id being the hash-keys in lingr-roster-table using (hash-value roster)
+        if (lingr-get-roster-member username roster)
+        collect room-id))
+
+(defun lingr-update-roster (presence room-id)
+  (let* ((roster (lingr-get-roster room-id))
+         (member (lingr-get-roster-member (lingr-presence-username presence) roster))
+         (is_online (assoc 'is_online member))
+         (timestamp (assoc 'timestamp member)))
+    (setcdr is_online (if (string-equal (lingr-presence-status presence) "online") t nil))
+    (setcdr timestamp (lingr-presence-timestamp presence))))
+
+(defun lingr-update-status-buffer ()
+  (let ((status-buffer (get-buffer-create lingr-status-buffer)))
+    (with-current-buffer status-buffer
+      (let ((buffer-read-only nil))
+        (erase-buffer)
+        (loop for roster being the hash-values in lingr-roster-table
+              do
+              (let* ((members (lingr-roster-members roster))
+                     (online-members (loop for (name . member) in members
+                                           if (lingr-member-online-p member)
+                                           collect member)))
+                (insert (format "%s : online = %s\n%s\n\n"
+                                (lingr-roster-name roster)
+                                (length online-members)
+                                (mapconcat (lambda (m) (lingr-member-name m))
+                                           online-members ", ")))))))))
 
 (defun lingr-show-update-summay (updates)
   (lingr-aif (delete-dups (loop for (type room) in updates
@@ -515,6 +559,11 @@ Special commands:
   (interactive)
   (when lingr-buffer-room-id
     (lingr-api-room-show lingr-session-data lingr-buffer-room-id)))
+
+(defun lingr-show-status ()
+  (interactive)
+  (lingr-update-status-buffer)
+  (display-buffer lingr-status-buffer))
 
 ;;;; Debug Utility
 (defvar lingr-debug nil)
