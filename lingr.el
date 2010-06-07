@@ -97,7 +97,7 @@
 (defvar lingr-subscribe-counter nil)
 (defvar lingr-buffer-basename "Lingr")
 (defvar lingr-buffer-room-id nil)
-(defvar lingr-room-table (make-hash-table :test 'equal))
+(defvar lingr-roster-table (make-hash-table :test 'equal))
 (defvar lingr-say-winconf nil)
 (defvar lingr-say-window-height-per 20)
 (defvar lingr-say-buffer "*Lingr Say*")
@@ -173,11 +173,11 @@
 (defun lingr-response-rooms (json) (assoc-default 'rooms json))
 (defun lingr-response-messages (json) (assoc-default 'messages json))
 
-(defun lingr-roominfo-id (roominfo) (assoc-default 'id roominfo))
-(defun lingr-roominfo-messages (roominfo) (assoc-default 'messages roominfo))
-
-(defun lingr-room-id (room) (car room))
-(defun lingr-room-buffer (room) (cadr room))
+(defun lingr-get-roster (room-id) (gethash room-id lingr-roster-table))
+(defun lingr-roster-id (roster) (assoc-default 'id roster))
+(defun lingr-roster-buffer (roster) (assoc-default 'buffer roster))
+(defun lingr-roster-name (roster) (assoc-default 'name roster))
+(defun lingr-roster-members (roster) (assoc-default 'members roster))
 
 (defun lingr-event-message (event) (assoc-default 'message event))
 (defun lingr-event-presence (event) (assoc-default 'presence event))
@@ -330,16 +330,13 @@
         (t nil)))
 
 (defun lingr-get-room-buffer (room-id)
-  (or (lingr-aif (lingr-room-buffer (gethash room-id lingr-room-table))
+  (or (lingr-aif (lingr-roster-buffer (gethash room-id lingr-roster-table))
           (if (buffer-live-p it) it nil))
-      (let* ((buffer (get-buffer-create (format "%s[%s]" lingr-buffer-basename room-id)))
-             (room (list room-id buffer)))
-        (puthash room-id room lingr-room-table)
-        buffer)))
+      (get-buffer-create (format "%s[%s]" lingr-buffer-basename room-id))))
 
 (defun lingr-get-room-id-list ()
-  (loop for key being the hash-keys in lingr-room-table using (hash-value room)
-        if (buffer-live-p (lingr-room-buffer room)) collect key))
+  (loop for key being the hash-keys in lingr-roster-table using (hash-value roster)
+        if (buffer-live-p (lingr-roster-buffer roster)) collect key))
 
 (defun lingr-decode-timestamp (timestamp)
   (format-time-string "[%x %T]" (apply 'encode-time (parse-time-string (timezone-make-date-arpa-standard timestamp)))))
@@ -359,16 +356,31 @@
                             (mapconcat 'identity (split-string text "\n")
                                        (concat "\n" fill-str)))))))
 
+(defun lingr-regist-room-roster (roominfo)
+  (let* ((room-id (assoc-default 'id roominfo))
+         (buffer (lingr-get-room-buffer room-id))
+        roster)
+    (dolist (key '(id name))
+      (push (assoc key roominfo) roster))
+    (push (cons 'members
+                (loop for member across (assoc-default 'members (assoc-default 'roster roominfo))
+                      collect (cons (assoc-default 'name member) member)))
+          roster)
+    (push (cons 'buffer buffer) roster)
+    (puthash room-id roster lingr-roster-table))
+  roominfo)
+
 (defun lingr-refresh-rooms (json)
   (loop for roominfo across (lingr-response-rooms json)
         do
-        (with-current-buffer (lingr-get-room-buffer (lingr-roominfo-id roominfo))
+        (lingr-regist-room-roster roominfo)
+        (with-current-buffer (lingr-get-room-buffer (assoc-default 'id roominfo))
           (lingr-room-mode)
-          (setq lingr-buffer-room-id (lingr-roominfo-id roominfo))
+          (setq lingr-buffer-room-id (assoc-default 'id roominfo))
           (let ((buffer-read-only nil))
             (erase-buffer)
             (goto-char (point-min))
-            (loop for message across (lingr-roominfo-messages roominfo)
+            (loop for message across (assoc-default 'messages roominfo)
                   do
                   (lingr-insert-message message))))))
 
