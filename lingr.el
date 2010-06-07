@@ -295,7 +295,6 @@
           (insert (concat (make-string (window-width) ?-) "\n")))) ;separete mark
       (loop for message across (lingr-response-messages json)
             do
-            (lingr-decode-message-text message)
             (let ((buffer-read-only nil))
               (lingr-insert-message message))))))
 
@@ -314,7 +313,8 @@
     (when (search-forward "\n\n" nil t)
       (let ((json-object-type 'alist) (json-array-type 'vector)
             (json-key-type nil) (json-false nil))
-        (json-read-from-string (buffer-substring-no-properties (point) (point-max)))))))
+        (json-read-from-string
+         (decode-coding-string (buffer-substring-no-properties (point) (point-max)) 'utf-8))))))
 
 (defun lingr-current-session-p (session-id)
   (and lingr-session-data
@@ -336,13 +336,6 @@
 (defun lingr-get-room-id-list ()
   (loop for key being the hash-keys in lingr-room-table using (hash-value room)
         if (buffer-live-p (lingr-room-buffer room)) collect key))
-
-(defun lingr-decode-message-text (message)
-  (let ((text-cons (assoc 'text message))
-        (nick-cons (assoc 'nickname message)))
-    (setcdr text-cons (decode-coding-string (cdr text-cons) 'utf-8))
-    (setcdr nick-cons (decode-coding-string (cdr nick-cons) 'utf-8))
-    message))
 
 (defun lingr-decode-timestamp (timestamp)
   (format-time-string "[%x %T]" (apply 'encode-time (parse-time-string (timezone-make-date-arpa-standard timestamp)))))
@@ -373,14 +366,12 @@
             (goto-char (point-min))
             (loop for message across (lingr-roominfo-messages roominfo)
                   do
-                  (lingr-decode-message-text message)
                   (lingr-insert-message message))))))
 
 (defun lingr-update-by-event (event)
   (case (lingr-event-type event)
     (message
      (let ((message (lingr-event-message event)))
-       (lingr-decode-message-text message)
        (lingr-update-with-buffer (lingr-get-room-buffer (lingr-message-room message))
          (lingr-insert-message message))
        (list 'message (lingr-message-room message))))
