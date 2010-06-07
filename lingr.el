@@ -90,6 +90,7 @@
 (defvar lingr-base-url "http://lingr.com/api/")
 (defvar lingr-observe-base-url "http://lingr.com:8080/api/")
 (defvar lingr-http-response-json nil)
+(defvar lingr-observe-response nil)
 (defvar lingr-session-data nil)
 (defvar lingr-observe-buffer nil)
 (defvar lingr-logout-session-flg nil)
@@ -273,7 +274,7 @@
   (setq lingr-subscribe-counter (lingr-response-counter json)))
 
 (defun lingr-api-observe-callback (json &rest args)
-  (setq lingr-http-response-json json)
+  (setq lingr-observe-response json)
   (lingr-debug-observe-log json)
   (when (and (lingr-current-session-p (car args))
              (eq lingr-subscribe-counter (cadr args)))
