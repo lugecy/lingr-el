@@ -573,7 +573,7 @@ Special commands:
     (with-current-buffer (get-buffer-create lingr-debug-log-buffer)
       (goto-char (point-max))
       (ignore-errors
-        (insert (format "%s | %s\n" (format-time-string "%x %T") (prin1-to-string obj)))
+        (insert (format "%s | %s\n" (format-time-string "%x %T") obj))
         (goto-char (point-max))))))
 
 (defun lingr-observe-alive ()
