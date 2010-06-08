@@ -64,6 +64,23 @@
   :type 'boolean
   :group 'lingr)
 
+(defcustom lingr-icon-mode nil
+  "if non-nil, use user icon."
+  :type 'boolean
+  :group 'lingr)
+
+(defcustom lingr-image-convert-program
+  (cond ((eq system-type 'windows-nt) "e:/cygwin/bin/convert.exe")
+        (t "/usr/bin/convert"))
+  "Program path for icon fix size."
+  :type 'string
+  :group 'lingr)
+
+(defcustom lingr-icon-fix-size 32
+  "Icon fix size."
+  :type 'integer
+  :group 'lingr)
+
 (defvar lingr-room-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-s") 'lingr-say-command)
@@ -106,8 +123,7 @@
 (defvar lingr-status-buffer "*Lingr Status*")
 (defvar lingr-get-before-limit 30)
 (defvar lingr-image-hash (make-hash-table :test 'equal)) ;; hash-table for caching image data
-(defvar lingr-icon-mode t)
-(defvar lingr-prev-key nil)
+(defvar lingr-last-say-nick nil)
 
 ;;;; Utility Macro
 (defmacro lingr-aif (test-form then-form &rest else-forms)
@@ -204,6 +220,7 @@
 (defun lingr-message-room (message) (assoc-default 'room message))
 (defun lingr-message-timestamp (message) (assoc-default 'timestamp message))
 (defun lingr-message-id (message) (assoc-default 'id message))
+(defun lingr-message-icon-url (message) (assoc-default 'icon_url message))
 
 (defun lingr-presence-text (presence) (assoc-default 'text presence))
 (defun lingr-presence-room (presence) (assoc-default 'room presence))
@@ -358,21 +375,50 @@
   (loop for key being the hash-keys in lingr-roster-table using (hash-value roster)
         if (buffer-live-p (lingr-roster-buffer roster)) collect key))
 
-(defsubst lingr-get-image (key url)
-  (or (gethash key lingr-image-hash)
+(defun lingr-get-image (url)
+  (or (gethash url lingr-image-hash)
       (let ((buf (url-retrieve-synchronously url)))
         (unwind-protect
             (with-current-buffer buf
-	      (let* ((type (when (re-search-forward  "Content-Type: image/\\(.+\\)" nil t 1)
-                             (intern (match-string 1))))
-                     (data (when (re-search-forward "^$" nil t 1)
-			     (buffer-substring (+ 1 (match-end 0)) (point-max)))))
-                (and type data
-		     (puthash key (create-image data type t) lingr-image-hash))))
+              (goto-char (point-min))
+              (when (looking-at "HTTP/")
+                (let* ((type (when (re-search-forward  "Content-Type: image/\\(.+\\)" nil t)
+                               (intern (match-string 1))))
+                       (raw-data (when (and type (re-search-forward "\r?\n\r?\n" nil t))
+                                   (buffer-substring (point) (point-max))))
+                       (fixed-data-pair (and raw-data (lingr-convert-image-data raw-data type))))
+                  (and fixed-data-pair
+                       (puthash url (create-image (car fixed-data-pair) (cdr fixed-data-pair) t) lingr-image-hash)))))
           (kill-buffer buf)))))
 
-(defsubst lingr-icon-image (nickname message)
-  (lingr-get-image nickname (assoc-default 'icon_url message)))
+(defun lingr-convert-image-data (image-data src-type)
+  (if (not (and lingr-image-convert-program
+                (file-executable-p lingr-image-convert-program)))
+      (cons image-data src-type)
+    (with-temp-buffer
+      (set-buffer-multibyte nil)
+      (buffer-disable-undo)
+      (let ((coding-system-for-read 'binary)
+            (coding-system-for-write 'binary)
+            (require-final-newline nil))
+        (insert image-data)
+        (let* ((args
+                `(,(format "%s:-" src-type)
+                  ,@(when (integerp lingr-icon-fix-size)
+                      `("-resize"
+                        ,(format "%dx%d" lingr-icon-fix-size lingr-icon-fix-size)))
+                  "xpm:-"))
+               (exit-status
+                (apply 'call-process-region (point-min) (point-max)
+                       lingr-image-convert-program t t nil args)))
+          (if (and (equal 0 exit-status)
+                   (> (length (buffer-string)) 0))
+              (cons (buffer-string) 'xpm)
+            ;; failed to convert the image.
+            nil))))))
+
+(defun lingr-icon-image (message)
+  (lingr-get-image (lingr-message-icon-url message)))
 
 (defun lingr-decode-timestamp (timestamp)
   (format-time-string "[%x %T]" (apply 'encode-time (parse-time-string (timezone-make-date-arpa-standard timestamp)))))
@@ -387,18 +433,18 @@
                            'face 'lingr-nickname-face
                            'lingr-mes-id (lingr-message-id message)))
 
-    (cond ((not lingr-icon-mode)
-           (insert (format "%-20s %s:\n" nick time-str)))
-          (t
-           (when (not (string-equal lingr-prev-key nick))
-             (let ((image (lingr-icon-image nick message)))
-               (if image
-		   (insert (format "%-20s %s:\n %s\n" nick time-str (propertize "_" 'display image)))
-                 (insert (format "%-20s %s:" nick time-str)))))))
+    (unless (string-equal lingr-last-say-nick nick)
+      (insert (format "%s%-20s %s\n"
+                      (lingr-aif (and lingr-icon-mode
+                                      (lingr-icon-image message))
+                          (propertize "_" 'display it 'lingr-mes-id (lingr-message-id message))
+                        "")
+                      nick time-str)))
     (insert (concat fill-str
                     (mapconcat 'identity (split-string text "\n")
                                (concat "\n" fill-str))
-                    "\n"))))
+                    "\n"))
+    (setq lingr-last-say-nick (lingr-message-nick message))))
 
 (defun lingr-regist-room-roster (roominfo)
   (let* ((room-id (assoc-default 'id roominfo))
@@ -416,20 +462,19 @@
   roominfo)
 
 (defun lingr-refresh-rooms (json)
-  (setq lingr-prev-key nil)
   (loop for roominfo across (lingr-response-rooms json)
         do
         (lingr-regist-room-roster roominfo)
         (with-current-buffer (lingr-get-room-buffer (assoc-default 'id roominfo))
           (lingr-room-mode)
-          (setq lingr-buffer-room-id (assoc-default 'id roominfo))
+          (setq lingr-buffer-room-id (assoc-default 'id roominfo)
+                lingr-last-say-nick nil)
           (let ((buffer-read-only nil))
             (erase-buffer)
             (goto-char (point-min))
             (loop for message across (assoc-default 'messages roominfo)
                   do
-                  (lingr-insert-message message)
-                  (setq lingr-prev-key (lingr-message-nick message)))))))
+                  (lingr-insert-message message))))))
 
 (defun lingr-update-by-event (event)
   (case (lingr-event-type event)
@@ -515,6 +560,7 @@ Special commands:
         mode-name "Lingr-Room"
         buffer-read-only t)
   (make-local-variable 'lingr-buffer-room-id)
+  (make-local-variable 'lingr-last-say-nick)
   (use-local-map lingr-room-map))
 
 ;;;; Interactive functions
