@@ -72,6 +72,7 @@
     (define-key map (kbd "C-c C-l") 'lingr-refresh-room)
     (define-key map (kbd "u") 'lingr-say-command)
     (define-key map (kbd "r") 'lingr-switch-room)
+    (define-key map (kbd "g") 'lingr-clear-roster-unread)
     map)
   "Lingr room mode map.")
 
@@ -98,6 +99,7 @@
 (defvar lingr-buffer-basename "Lingr")
 (defvar lingr-buffer-room-id nil)
 (defvar lingr-roster-table (make-hash-table :test 'equal))
+(defvar lingr-last-say-id nil)
 (defvar lingr-say-winconf nil)
 (defvar lingr-say-window-height-per 20)
 (defvar lingr-say-buffer "*Lingr Say*")
@@ -176,8 +178,7 @@
 (defun lingr-response-events (json) (assoc-default 'events json))
 (defun lingr-response-rooms (json) (assoc-default 'rooms json))
 (defun lingr-response-messages (json) (assoc-default 'messages json))
-(defun lingr-presence-username (presence) (assoc-default 'username presence))
-(defun lingr-presence-status (presence) (assoc-default 'status presence))
+(defun lingr-response-message (json) (assoc-default 'message json))
 
 (defun lingr-get-roster (room-id) (gethash room-id lingr-roster-table))
 (defun lingr-get-roster-member (username roster)
@@ -186,6 +187,7 @@
 (defun lingr-roster-buffer (roster) (assoc-default 'buffer roster))
 (defun lingr-roster-name (roster) (assoc-default 'name roster))
 (defun lingr-roster-members (roster) (assoc-default 'members roster))
+(defun lingr-roster-unread (roster) (assoc-default 'unread roster))
 
 (defun lingr-member-name (member) (assoc-default 'name member))
 (defun lingr-member-online-p (member) (assoc-default 'is_online member))
@@ -202,6 +204,8 @@
 (defun lingr-presence-text (presence) (assoc-default 'text presence))
 (defun lingr-presence-room (presence) (assoc-default 'room presence))
 (defun lingr-presence-timestamp (presence) (assoc-default 'timestamp presence))
+(defun lingr-presence-username (presence) (assoc-default 'username presence))
+(defun lingr-presence-status (presence) (assoc-default 'status presence))
 
 ;;;; Lingr API functions
 (defun lingr-api-session-create (user password)
@@ -259,8 +263,7 @@
       (lingr-http-post "room/say"
                        `(("session" . ,it) ("room" . ,room)
                          ("nickname" . ,(lingr-session-nick session))
-                         ("text" . ,(encode-coding-string text 'utf-8)))
-                       nil t)))
+                         ("text" . ,(encode-coding-string text 'utf-8))))))
 
 (defun lingr-api-observe (session)
   (lingr-aif (lingr-session-id session)
@@ -380,6 +383,7 @@
                       collect (cons (assoc-default 'username member) member)))
           roster)
     (push (cons 'buffer buffer) roster)
+    (push (cons 'unread nil) roster)
     (puthash room-id roster lingr-roster-table))
   roominfo)
 
@@ -403,6 +407,7 @@
      (let ((message (lingr-event-message event)))
        (lingr-update-with-buffer (lingr-get-room-buffer (lingr-message-room message))
          (lingr-insert-message message))
+       (lingr-update-roster-by-message message)
        (list 'message (lingr-message-room message))))
     (presence
      (let ((presence (lingr-event-presence event)))
@@ -414,7 +419,7 @@
                  (text (lingr-presence-text presence)))
              (insert (propertize (format "%s  %s\n" text (lingr-decode-timestamp timestamp))
                                  'face 'lingr-presence-event-face))))
-         (lingr-update-roster presence room-id))
+         (lingr-update-roster-by-presence presence room-id))
        (list 'presence (lingr-presence-room presence))))
     (t nil)))
 
@@ -423,13 +428,21 @@
         if (lingr-get-roster-member username roster)
         collect room-id))
 
-(defun lingr-update-roster (presence room-id)
+(defun lingr-update-roster-by-presence (presence room-id)
   (let* ((roster (lingr-get-roster room-id))
          (member (lingr-get-roster-member (lingr-presence-username presence) roster))
          (is_online (assoc 'is_online member))
          (timestamp (assoc 'timestamp member)))
     (setcdr is_online (if (string-equal (lingr-presence-status presence) "online") t nil))
     (setcdr timestamp (lingr-presence-timestamp presence))))
+
+(defun lingr-update-roster-by-message (message)
+  (unless (string-equal (lingr-message-id message) lingr-last-say-id)
+    (let* ((timestamp (lingr-message-timestamp message))
+           (roster (lingr-get-roster (lingr-message-room message)))
+           (unread (assoc 'unread roster)))
+      (setcdr unread (cons (format "unread message %s" (lingr-decode-timestamp (lingr-message-timestamp message)))
+                           (cdr unread))))))
 
 (defun lingr-update-status-buffer ()
   (let ((status-buffer (get-buffer-create lingr-status-buffer)))
@@ -442,11 +455,12 @@
                      (online-members (loop for (name . member) in members
                                            if (lingr-member-online-p member)
                                            collect member)))
-                (insert (format "%s : online = %s\n%s\n\n"
+                (insert (format "%s : online = %s\n%s\n%s\n\n"
                                 (lingr-roster-name roster)
                                 (length online-members)
                                 (mapconcat (lambda (m) (lingr-member-name m))
-                                           online-members ", ")))))))))
+                                           online-members ", ")
+                                (mapconcat 'identity (reverse (lingr-roster-unread roster)) "\n")))))))))
 
 (defun lingr-show-update-summay (updates)
   (lingr-aif (delete-dups (loop for (type room) in updates
@@ -529,7 +543,9 @@ Special commands:
 (defun lingr-say-execute ()
   (interactive)
   (when (> (length (buffer-string)) 0)
-    (lingr-say-command-internal (buffer-string)))
+    (let ((res (lingr-say-command-internal (buffer-string))))
+      (setq lingr-last-say-id (lingr-message-id (lingr-response-message res)))))
+  (lingr-clear-roster-unread)
   (kill-buffer (current-buffer))
   (when lingr-say-winconf
     (set-window-configuration lingr-say-winconf)))
@@ -562,6 +578,13 @@ Special commands:
   (interactive)
   (when lingr-buffer-room-id
     (lingr-api-room-show lingr-session-data lingr-buffer-room-id)))
+
+(defun lingr-clear-roster-unread ()
+  (interactive)
+  (when lingr-buffer-room-id
+    (let ((unread (assoc 'unread (lingr-get-roster lingr-buffer-room-id))))
+      (setcdr unread nil))
+    (lingr-update-status-buffer)))
 
 (defun lingr-show-status ()
   (interactive)
