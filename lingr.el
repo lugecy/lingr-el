@@ -509,11 +509,13 @@
        ;; presence-event is send to only one room.
        ;; I want update that all rosters that member belongs to.
        (dolist (room-id (lingr-get-rooms-by-username (lingr-presence-username presence)))
-         (lingr-update-with-buffer (lingr-get-room-buffer room-id)
-           (let ((timestamp (lingr-presence-timestamp presence))
-                 (text (lingr-presence-text presence)))
-             (insert (propertize (format "%s  %s\n" text (lingr-decode-timestamp timestamp))
-                                 'face 'lingr-presence-event-face))))
+         (unless (eq (string-equal (lingr-presence-status presence) "online")
+                     (lingr-member-online-p (lingr-get-roster-member (lingr-presence-username presence) (lingr-get-roster room-id))))
+           (lingr-update-with-buffer (lingr-get-room-buffer room-id)
+             (let ((timestamp (lingr-presence-timestamp presence))
+                   (text (lingr-presence-text presence)))
+               (insert (propertize (format "%s  %s\n" text (lingr-decode-timestamp timestamp))
+                                   'face 'lingr-presence-event-face)))))
          (lingr-update-roster-by-presence presence room-id))
        (list 'presence (lingr-presence-room presence))))
     (t nil)))
