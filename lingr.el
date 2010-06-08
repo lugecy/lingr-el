@@ -442,7 +442,9 @@
     (let* ((timestamp (lingr-message-timestamp message))
            (roster (lingr-get-roster (lingr-message-room message)))
            (unread (assoc 'unread roster)))
-      (setcdr unread (cons (format "unread message %s" (lingr-decode-timestamp (lingr-message-timestamp message)))
+      (setcdr unread (cons (format "%s: unread message from %s"
+                                   (lingr-decode-timestamp (lingr-message-timestamp message))
+                                   (lingr-message-nick message))
                            (cdr unread))))))
 
 (defun lingr-update-status-buffer ()
