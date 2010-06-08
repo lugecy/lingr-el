@@ -621,7 +621,7 @@ Special commands:
 (defun lingr-say-execute ()
   (interactive)
   (when (> (length (buffer-string)) 0)
-    (let ((res (lingr-say-command-internal (buffer-string))))
+    (let ((res (lingr-say-command-internal (replace-regexp-in-string "\n+\\'" "\n" (buffer-string)))))
       (setq lingr-last-say-id (lingr-message-id (lingr-response-message res)))))
   (lingr-clear-roster-unread)
   (kill-buffer (current-buffer))
