@@ -105,6 +105,9 @@
 (defvar lingr-say-buffer "*Lingr Say*")
 (defvar lingr-status-buffer "*Lingr Status*")
 (defvar lingr-get-before-limit 30)
+(defvar lingr-image-hash (make-hash-table :test 'equal)) ;; hash-table for caching image data
+(defvar lingr-icon-mode t)
+(defvar lingr-prev-key nil)
 
 ;;;; Utility Macro
 (defmacro lingr-aif (test-form then-form &rest else-forms)
@@ -355,6 +358,22 @@
   (loop for key being the hash-keys in lingr-roster-table using (hash-value roster)
         if (buffer-live-p (lingr-roster-buffer roster)) collect key))
 
+(defsubst lingr-get-image (key url)
+  (or (gethash key lingr-image-hash)
+      (let ((buf (url-retrieve-synchronously url)))
+        (unwind-protect
+            (with-current-buffer buf
+	      (let* ((type (when (re-search-forward  "Content-Type: image/\\(.+\\)" nil t 1)
+                             (intern (match-string 1))))
+                     (data (when (re-search-forward "^$" nil t 1)
+			     (buffer-substring (+ 1 (match-end 0)) (point-max)))))
+                (and type data
+		     (puthash key (create-image data type t) lingr-image-hash))))
+          (kill-buffer buf)))))
+
+(defsubst lingr-icon-image (nickname message)
+  (lingr-get-image nickname (assoc-default 'icon_url message)))
+
 (defun lingr-decode-timestamp (timestamp)
   (format-time-string "[%x %T]" (apply 'encode-time (parse-time-string (timezone-make-date-arpa-standard timestamp)))))
 
@@ -367,11 +386,19 @@
     (setq nick (propertize nick
                            'face 'lingr-nickname-face
                            'lingr-mes-id (lingr-message-id message)))
-    (insert (format "%-20s %s:\n%s\n"
-                    nick time-str
-                    (concat fill-str
-                            (mapconcat 'identity (split-string text "\n")
-                                       (concat "\n" fill-str)))))))
+
+    (cond ((not lingr-icon-mode)
+           (insert (format "%-20s %s:\n" nick time-str)))
+          (t
+           (when (not (string-equal lingr-prev-key nick))
+             (let ((image (lingr-icon-image nick message)))
+               (if image
+		   (insert (format "%-20s %s:\n %s\n" nick time-str (propertize "_" 'display image)))
+                 (insert (format "%-20s %s:" nick time-str)))))))
+    (insert (concat fill-str
+                    (mapconcat 'identity (split-string text "\n")
+                               (concat "\n" fill-str))
+                    "\n"))))
 
 (defun lingr-regist-room-roster (roominfo)
   (let* ((room-id (assoc-default 'id roominfo))
@@ -389,6 +416,7 @@
   roominfo)
 
 (defun lingr-refresh-rooms (json)
+  (setq lingr-prev-key nil)
   (loop for roominfo across (lingr-response-rooms json)
         do
         (lingr-regist-room-roster roominfo)
@@ -400,7 +428,8 @@
             (goto-char (point-min))
             (loop for message across (assoc-default 'messages roominfo)
                   do
-                  (lingr-insert-message message))))))
+                  (lingr-insert-message message)
+                  (setq lingr-prev-key (lingr-message-nick message)))))))
 
 (defun lingr-update-by-event (event)
   (case (lingr-event-type event)
