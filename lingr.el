@@ -90,8 +90,18 @@
     (define-key map (kbd "u") 'lingr-say-command)
     (define-key map (kbd "r") 'lingr-switch-room)
     (define-key map (kbd "g") 'lingr-clear-roster-unread)
+    (define-key map (kbd "S") 'lingr-show-status)
     map)
   "Lingr room mode map.")
+
+(defvar lingr-status-buffer-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "RET") 'lingr-status-switch-room)
+    (define-key map (kbd "o") 'lingr-status-switch-room-other-window)
+    (define-key map (kbd "n") 'lingr-status-next-room)
+    (define-key map (kbd "p") 'lingr-status-previous-room)
+    map)
+  "Lingr status buffer map.")
 
 (defface lingr-nickname-face
   '((t (:foreground "cornflower blue")))
@@ -104,6 +114,14 @@
 (defface lingr-presence-event-face
   '((t (:foreground "gray45")))
   "Face for presence event.")
+
+(defface lingr-status-room-face
+  '((t (:foreground "Green")))
+  "Face for status buffer room name.")
+
+(defface lingr-status-unread-face
+  '((t (:foreground "cornflower blue")))
+  "Face for status buffer unread event.")
 
 (defvar lingr-base-url "http://lingr.com/api/")
 (defvar lingr-observe-base-url "http://lingr.com:8080/api/")
@@ -303,7 +321,9 @@
   (when (lingr-current-session-p (car args))
     (lingr-refresh-rooms json)
     (lingr-update-status-buffer)
-    (lingr-switch-room (or (cadr args) (car (lingr-get-room-id-list))))))
+    (lingr-aif (cadr args)
+        (lingr-switch-room it)
+      (lingr-show-status t))))
 
 (defun lingr-api-subscribe-callback (json &rest args)
   (setq lingr-http-response-json json)
@@ -532,17 +552,51 @@
                      (online-members (loop for (name . member) in members
                                            if (lingr-member-online-p member)
                                            collect member)))
-                (insert (format "%s : online = %s\n%s\n%s\n\n"
-                                (lingr-roster-name roster)
+                (insert (format "%s : %s online members\n%s\n%s\n\n"
+                                (propertize (lingr-roster-name roster)
+                                            'lingr-room-id (lingr-roster-id roster)
+                                            'face 'lingr-status-room-face)
                                 (length online-members)
                                 (mapconcat (lambda (m) (lingr-member-name m))
                                            online-members ", ")
-                                (mapconcat 'identity (reverse (lingr-roster-unread roster)) "\n")))))))))
+                                (propertize (mapconcat 'identity (reverse (lingr-roster-unread roster)) "\n")
+                                            'face 'lingr-status-unread-face))))))
+      (setq buffer-read-only t)
+      (use-local-map lingr-status-buffer-map))))
 
-(defun lingr-show-update-summay (updates)
-  (lingr-aif (delete-dups (loop for (type room) in updates
-                                if (eq type 'message) collect room))
-      (message "Lingr update message in %s." (mapconcat 'identity it ","))))
+(defun lingr-status-switch-room ()
+  (interactive)
+  (lingr-aif (get-text-property (point) 'lingr-room-id)
+      (lingr-switch-room it)))
+
+(defun lingr-status-switch-room-other-window ()
+  (interactive)
+  (lingr-aif (get-text-property (point) 'lingr-room-id)
+      (lingr-switch-room it t)))
+
+(defun lingr-status-next-room ()
+  (interactive)
+  (let ((now-pos (point))
+        room-pos)
+    (while (not room-pos)
+      (setq now-pos (next-single-property-change now-pos 'lingr-room-id))
+      (if (null now-pos)
+          (setq room-pos 'not-found)
+        (when (get-text-property now-pos 'lingr-room-id)
+          (setq room-pos now-pos))))
+    (and (integerp room-pos) (goto-char room-pos))))
+
+(defun lingr-status-previous-room ()
+  (interactive)
+  (let ((now-pos (point))
+        room-pos)
+    (while (not room-pos)
+      (setq now-pos (previous-single-property-change now-pos 'lingr-room-id))
+      (if (null now-pos)
+          (setq room-pos (if (get-text-property (point-min) 'lingr-room-id) (point-min) 'not-found))
+        (when (get-text-property now-pos 'lingr-room-id)
+          (setq room-pos now-pos))))
+    (and (integerp room-pos) (goto-char room-pos))))
 
 (defun lingr-presence-online ()
   (lingr-api-set-presence lingr-session-data "online"))
@@ -562,6 +616,11 @@ Special commands:
   (make-local-variable 'lingr-buffer-room-id)
   (make-local-variable 'lingr-last-say-nick)
   (use-local-map lingr-room-map))
+
+(defun lingr-show-update-summay (updates)
+  (lingr-aif (delete-dups (loop for (type room) in updates
+                                if (eq type 'message) collect room))
+      (message "Lingr update message in %s." (mapconcat 'identity it ","))))
 
 ;;;; Interactive functions
 (defun lingr-login (&optional username password)
@@ -634,11 +693,11 @@ Special commands:
   (when lingr-say-winconf
     (set-window-configuration lingr-say-winconf)))
 
-(defun lingr-switch-room (room-id)
+(defun lingr-switch-room (room-id &optional other-window)
   (interactive (list (completing-read "Switch Room: "
                                       (lingr-get-room-id-list)
                                       nil t)))
-  (switch-to-buffer (lingr-get-room-buffer room-id)))
+  (funcall (if other-window 'pop-to-buffer 'switch-to-buffer) (lingr-get-room-buffer room-id)))
 
 (defun lingr-refresh-all-room ()
   (interactive)
@@ -664,10 +723,10 @@ Special commands:
       (setcdr unread nil))
     (lingr-update-status-buffer)))
 
-(defun lingr-show-status ()
-  (interactive)
+(defun lingr-show-status (&optional this-buffer)
+  (interactive "P")
   (lingr-update-status-buffer)
-  (display-buffer lingr-status-buffer))
+  (funcall (if this-buffer 'switch-to-buffer 'pop-to-buffer) lingr-status-buffer))
 
 ;;;; Debug Utility
 (defvar lingr-debug nil)
