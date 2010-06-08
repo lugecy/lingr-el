@@ -676,15 +676,16 @@ Special commands:
 (defun lingr-say-command-internal (text)
   (interactive "sLingr-Say: ")
   (if lingr-buffer-room-id
-      (lingr-api-say lingr-session-data lingr-buffer-room-id text)
+      (lingr-aif (lingr-api-say lingr-session-data lingr-buffer-room-id text)
+          (progn
+            (setq lingr-last-say-id (lingr-message-id (lingr-response-message it)))
+            (lingr-clear-roster-unread)))
     (error "This is not Lingr Chat buffer.")))
 
 (defun lingr-say-execute ()
   (interactive)
   (when (> (length (buffer-string)) 0)
-    (let ((res (lingr-say-command-internal (replace-regexp-in-string "\n+\\'" "\n" (buffer-string)))))
-      (setq lingr-last-say-id (lingr-message-id (lingr-response-message res)))))
-  (lingr-clear-roster-unread)
+    (lingr-say-command-internal (replace-regexp-in-string "\n+\\'" "\n" (buffer-string))))
   (kill-buffer (current-buffer))
   (when lingr-say-winconf
     (set-window-configuration lingr-say-winconf)))
