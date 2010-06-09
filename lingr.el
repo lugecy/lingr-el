@@ -689,7 +689,7 @@ Special commands:
 (defun lingr-say-execute ()
   (interactive)
   (when (> (length (buffer-string)) 0)
-    (lingr-say-command-internal (replace-regexp-in-string "\n+\\'" "\n" (buffer-string))))
+    (lingr-say-command-internal (replace-regexp-in-string "\n+\\'" "" (buffer-string))))
   (kill-buffer (current-buffer))
   (when lingr-say-winconf
     (set-window-configuration lingr-say-winconf)))
