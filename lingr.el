@@ -355,9 +355,13 @@
         (save-excursion
           (insert (concat (make-string (window-width) ?-) "\n")))) ;separete mark
       (loop for message across (lingr-response-messages json)
+            with last-say-nick
+            initially (setq last-say-nick lingr-last-say-nick
+                            lingr-last-say-nick nil)
             do
             (let ((buffer-read-only nil))
-              (lingr-insert-message message))))))
+              (lingr-insert-message message))
+            finally (setq lingr-last-say-nick last-say-nick)))))
 
 ;;;; Utility function
 (defmacro lingr-update-with-buffer (buffer &rest body)
