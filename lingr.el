@@ -86,6 +86,11 @@
   :type 'boolean
   :group 'lingr)
 
+(defcustom lingr-clear-unread-on-visit nil
+  "If non-nil, clears status buffer's notification when buffer visited."
+  :type 'boolean
+  :group 'lingr)
+
 (defvar lingr-room-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-s") 'lingr-say-command)
@@ -742,7 +747,9 @@ Special commands:
   (interactive (list (completing-read "Switch Room: "
                                       (lingr-get-room-id-list)
                                       nil t)))
-  (funcall (if other-window 'pop-to-buffer 'switch-to-buffer) (lingr-get-room-buffer room-id)))
+  (funcall (if other-window 'pop-to-buffer 'switch-to-buffer) (lingr-get-room-buffer room-id))
+  (when lingr-clear-unread-on-visit
+    (lingr-clear-roster-unread room-id)))
 
 (defun lingr-refresh-all-room ()
   (interactive)
@@ -763,12 +770,13 @@ Special commands:
   (when lingr-buffer-room-id
     (lingr-api-room-show lingr-session-data lingr-buffer-room-id)))
 
-(defun lingr-clear-roster-unread ()
+(defun lingr-clear-roster-unread (&optional room-id)
   (interactive)
-  (when lingr-buffer-room-id
-    (let ((unread (assoc 'unread (lingr-get-roster lingr-buffer-room-id))))
-      (setcdr unread nil))
-    (lingr-update-status-buffer)))
+  (let ((room-id (or room-id lingr-buffer-room-id)))
+    (when room-id
+      (let ((unread (assoc 'unread (lingr-get-roster room-id))))
+        (setcdr unread nil))
+      (lingr-update-status-buffer))))
 
 (defun lingr-show-status (&optional this-buffer)
   (interactive "P")
