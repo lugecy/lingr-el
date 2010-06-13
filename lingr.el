@@ -213,11 +213,15 @@
   (goto-char (point-min))
   (unless (looking-at "HTTP/")
     (lingr-debug-observe-log (propertize "Lingr server not response." 'face '(:foreground "Red")))
+    (setq lingr-observe-buffer nil)
+    (lingr-update-status-buffer)
     (error "Lingr server not response."))
   (let ((json (lingr-get-json-data))
         (buffer (current-buffer)))
     (unless (equal (lingr-response-status json) "ok")
       (lingr-debug-observe-log (list (propertize "Error" 'face '(:foreground "Red")) status func args json))
+      (setq lingr-observe-buffer nil)
+      (lingr-update-status-buffer)
       (error "Lingr API Error: %s" json))
     (kill-buffer buffer)
     (apply func (cons json args))))
@@ -586,7 +590,9 @@
                                 (mapconcat (lambda (m) (lingr-member-name m))
                                            online-members ", ")
                                 (propertize (mapconcat 'identity (reverse (lingr-roster-unread roster)) "\n")
-                                            'face 'lingr-status-unread-face))))))
+                                            'face 'lingr-status-unread-face)))))
+        (unless lingr-observe-buffer
+          (insert (propertize "Lingr observer is Dead!!!\n" 'face '(:foreground "Red")))))
       (setq buffer-read-only t)
       (use-local-map lingr-status-buffer-map))))
 
@@ -801,5 +807,14 @@ Special commands:
 (defun lingr-observe-alive ()
   (and (buffer-live-p lingr-observe-buffer)
        (get-buffer-process lingr-observe-buffer)))
+
+(defun lingr-observe-revive ()
+  (interactive)
+  (if (and lingr-session-data
+           (ignore-errors
+             (lingr-api-session-verify (lingr-session-id lingr-session-data))
+             t))
+      (lingr-api-observe lingr-session-data)
+    (call-interactively 'lingr-login)))
 
 (provide 'lingr)
