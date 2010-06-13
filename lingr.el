@@ -353,11 +353,13 @@
     (lingr-aif (lingr-response-counter json)
         (setq lingr-subscribe-counter it))
     (lingr-aif (lingr-response-events json)
-        (let ((updates (loop for event across it
-                             collect (lingr-update-by-event event))))
-          (lingr-update-status-buffer)
-          (when lingr-show-update-notification
-            (lingr-show-update-summay updates))))
+        (save-window-excursion
+          (save-excursion
+            (let ((updates (loop for event across it
+                                 collect (lingr-update-by-event event))))
+              (lingr-update-status-buffer)
+              (when lingr-show-update-notification
+                (lingr-show-update-summay updates))))))
     (setq lingr-observe-buffer nil)
     (unless lingr-logout-session-flg
       (lingr-api-observe lingr-session-data))))
