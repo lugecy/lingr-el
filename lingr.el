@@ -112,6 +112,8 @@
     (define-key map (kbd "o") 'lingr-status-switch-room-other-window)
     (define-key map (kbd "n") 'lingr-status-next-room)
     (define-key map (kbd "p") 'lingr-status-previous-room)
+    (define-key map (kbd "j") 'lingr-status-next-room)
+    (define-key map (kbd "k") 'lingr-status-previous-room)
     map)
   "Lingr status buffer map.")
 
