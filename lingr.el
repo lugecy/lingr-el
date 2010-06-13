@@ -81,6 +81,11 @@
   :type 'integer
   :group 'lingr)
 
+(defcustom lingr-auto-trigger-get-before-archive t
+  "If non-nil, lingr-room-previous-nick command trigger get-before-archive in buffer head."
+  :type 'boolean
+  :group 'lingr)
+
 (defvar lingr-room-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-s") 'lingr-say-command)
@@ -131,6 +136,7 @@
 (defvar lingr-observe-response nil)
 (defvar lingr-session-data nil)
 (defvar lingr-observe-buffer nil)
+(defvar lingr-get-archives-async-buffer nil)
 (defvar lingr-logout-session-flg nil)
 (defvar lingr-subscribe-counter nil)
 (defvar lingr-buffer-basename "Lingr")
@@ -282,10 +288,11 @@
 
 (defun lingr-api-get-archives (session room max_message_id &optional limit)
   (lingr-aif (lingr-session-id session)
-      (lingr-http-get "room/get_archives"
-                      `(("session" . ,it) ("room" . ,room)
-                        ("before" . ,max_message_id) ("limit" . ,(number-to-string (or limit lingr-get-before-limit))))
-                      'lingr-api-get-archives-callback t (list it room))))
+      (setq lingr-get-archives-async-buffer
+            (lingr-http-get "room/get_archives"
+                            `(("session" . ,it) ("room" . ,room)
+                              ("before" . ,max_message_id) ("limit" . ,(number-to-string (or limit lingr-get-before-limit))))
+                            'lingr-api-get-archives-callback t (list it room)))))
 
 (defun lingr-api-subscribe (session room &optional reset)
   (lingr-aif (lingr-session-id session)
@@ -363,7 +370,8 @@
             do
             (let ((buffer-read-only nil))
               (lingr-insert-message message))
-            finally (setq lingr-last-say-nick last-say-nick)))))
+            finally (setq lingr-last-say-nick last-say-nick)))
+    (setq lingr-get-archives-async-buffer nil)))
 
 ;;;; Utility function
 (defmacro lingr-update-with-buffer (buffer &rest body)
@@ -643,7 +651,10 @@ Special commands:
 (defun lingr-room-previous-nick ()
   (interactive)
   (lingr-aif (lingr-previous-property-pos 'nick (point))
-      (goto-char it)))
+      (goto-char it)
+    (when (and lingr-auto-trigger-get-before-archive
+               (not lingr-get-archives-async-buffer))
+      (lingr-get-before-archive))))
 
 (defun lingr-room-next-nick ()
   (interactive)
@@ -742,7 +753,9 @@ Special commands:
   (interactive "P")
   (when lingr-buffer-room-id
     (lingr-api-get-archives lingr-session-data lingr-buffer-room-id
-                            (get-text-property (point-min) 'lingr-mes-id)
+                            (lingr-aif (get-text-property (point-min) 'lingr-mes-id)
+                                it
+                              (get-text-property (next-single-property-change (point-min) 'lingr-mes-id) 'lingr-mes-id))
                             (if (and (numberp limit) (> limit 0)) limit nil))))
 
 (defun lingr-refresh-room ()
