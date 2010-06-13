@@ -91,6 +91,8 @@
     (define-key map (kbd "r") 'lingr-switch-room)
     (define-key map (kbd "g") 'lingr-clear-roster-unread)
     (define-key map (kbd "S") 'lingr-show-status)
+    (define-key map (kbd "j") 'lingr-room-next-nick)
+    (define-key map (kbd "k") 'lingr-room-previous-nick)
     map)
   "Lingr room mode map.")
 
@@ -455,7 +457,8 @@
     (setq time-str (propertize time-str 'face 'lingr-timestamp-face))
     (setq nick (propertize nick
                            'face 'lingr-nickname-face
-                           'lingr-mes-id (lingr-message-id message)))
+                           'lingr-mes-id (lingr-message-id message)
+                           'nick nick))
 
     (unless (string-equal lingr-last-say-nick nick)
       (insert (format "%s%-20s %s\n"
@@ -582,27 +585,41 @@
 
 (defun lingr-status-next-room ()
   (interactive)
-  (let ((now-pos (point))
-        room-pos)
-    (while (not room-pos)
-      (setq now-pos (next-single-property-change now-pos 'lingr-room-id))
-      (if (null now-pos)
-          (setq room-pos 'not-found)
-        (when (get-text-property now-pos 'lingr-room-id)
-          (setq room-pos now-pos))))
-    (and (integerp room-pos) (goto-char room-pos))))
+  (lingr-aif (lingr-next-property-pos 'lingr-room-id (point))
+      (goto-char it)))
+
+(defun lingr-next-property-pos (property &optional pos)
+  (let* ((current (or pos (point)))
+         (next (next-single-property-change current property)))
+    (if next
+        (if (get-text-property next property)
+            next
+          (next-single-property-change next property))
+      nil)))
 
 (defun lingr-status-previous-room ()
   (interactive)
-  (let ((now-pos (point))
-        room-pos)
-    (while (not room-pos)
-      (setq now-pos (previous-single-property-change now-pos 'lingr-room-id))
-      (if (null now-pos)
-          (setq room-pos (if (get-text-property (point-min) 'lingr-room-id) (point-min) 'not-found))
-        (when (get-text-property now-pos 'lingr-room-id)
-          (setq room-pos now-pos))))
-    (and (integerp room-pos) (goto-char room-pos))))
+  (lingr-aif (lingr-previous-property-pos 'lingr-room-id (point))
+      (goto-char it)))
+
+(defun lingr-previous-property-pos (property &optional pos)
+  (let ((current (or pos (point))))
+    (if (eq current (point-min))
+        nil
+      (let ((prev (previous-single-property-change current property)))
+        (cond
+         ((null prev)
+          (if (get-text-property (point-min) property)
+              (point-min)
+            nil))
+         ((get-text-property prev property) prev)
+         (t
+          (let ((prev (previous-single-property-change prev property)))
+            (if (null prev)
+                (if (get-text-property (point-min) property)
+                    (point-min)
+                  nil)
+              prev))))))))
 
 (defun lingr-presence-online ()
   (lingr-api-set-presence lingr-session-data "online"))
@@ -622,6 +639,16 @@ Special commands:
   (make-local-variable 'lingr-buffer-room-id)
   (make-local-variable 'lingr-last-say-nick)
   (use-local-map lingr-room-map))
+
+(defun lingr-room-previous-nick ()
+  (interactive)
+  (lingr-aif (lingr-previous-property-pos 'nick (point))
+      (goto-char it)))
+
+(defun lingr-room-next-nick ()
+  (interactive)
+  (lingr-aif (lingr-next-property-pos 'nick (point))
+      (goto-char it)))
 
 (defun lingr-show-update-summay (updates)
   (lingr-aif (delete-dups (loop for (type room) in updates
