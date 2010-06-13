@@ -117,6 +117,11 @@
     map)
   "Lingr status buffer map.")
 
+(defvar lingr-connected-hook nil)
+(defvar lingr-message-hook nil)
+(defvar lingr-join-hook nil)
+(defvar lingr-leave-hook nil)
+
 (defface lingr-nickname-face
   '((t (:foreground "cornflower blue")))
   "Face for nickname.")
@@ -531,6 +536,7 @@
        (lingr-update-with-buffer (lingr-get-room-buffer (lingr-message-room message))
          (lingr-insert-message message))
        (lingr-update-roster-by-message message)
+       (run-hook-with-args 'lingr-message-hook message)
        (list 'message (lingr-message-room message))))
     (presence
      (let ((presence (lingr-event-presence event)))
@@ -545,6 +551,10 @@
                (insert (propertize (format "%s  %s\n" text (lingr-decode-timestamp timestamp))
                                    'face 'lingr-presence-event-face)))))
          (lingr-update-roster-by-presence presence room-id))
+       (run-hook-with-args (if (string-equal (lingr-presence-status presence) "online")
+                               'lingr-join-hook
+                             'lingr-leave-hook)
+                           presence)
        (list 'presence (lingr-presence-room presence))))
     (t nil)))
 
@@ -695,6 +705,7 @@ Special commands:
         (when rooms
           (lingr-api-subscribe it rooms-query)
           (lingr-api-room-show it rooms-query)
+          (run-hooks 'lingr-connected-hook)
           (lingr-api-observe it)))))
 
 (defun lingr-logout ()
