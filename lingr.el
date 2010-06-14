@@ -185,6 +185,7 @@
   (lingr-http-session "POST" (concat lingr-base-url path)
                       args callback async cbargs))
 
+(defvar lingr-http-use-wget t)
 (defun lingr-http-session (method url args &optional callback async cbargs)
   (let* ((data-string (mapconcat (lambda (arg)
                                    (concat (url-hexify-string (car arg))
@@ -201,16 +202,39 @@
                                ""
                              data-string))
          (url-show-status lingr-url-show-status))
+    (if lingr-http-use-wget
+        (lingr-http-session-use-wget request-url url-request-data response-callback async cbargs)
+      (if async
+          (let ((buffer (url-retrieve request-url 'lingr-api-access-callback (append (list response-callback) cbargs))))
+            (when (buffer-live-p buffer)
+              (with-current-buffer buffer
+                (set (make-local-variable 'url-show-status)
+                     lingr-url-show-status)))
+            buffer)
+        (lingr-aif (url-retrieve-synchronously request-url)
+            (with-current-buffer it
+              (lingr-api-access-callback nil response-callback)))))))
+
+(defun lingr-http-session-use-wget (url post-data callback async cbargs)
+  (let ((buffer (generate-new-buffer "*lingr-wget*"))
+        (wget-args `("-q" "--save-headers" "-O-"
+                     ,@(if (> (length post-data) 0)
+                           (list "--post-data" post-data))
+                     ,url)))
     (if async
-        (let ((buffer (url-retrieve request-url 'lingr-api-access-callback (append (list response-callback) cbargs))))
-          (when (buffer-live-p buffer)
-            (with-current-buffer buffer
-              (set (make-local-variable 'url-show-status)
-                   lingr-url-show-status)))
+        (let* ((proc (apply #'start-process "lingr-wget" buffer "wget" wget-args)))
+          (set-process-sentinel proc
+                                (lexical-let ((callback callback)
+                                              (cbargs cbargs))
+                                  (lambda (proc status)
+                                    (when (string-equal status "finished\n")
+                                      (with-current-buffer (process-buffer proc)
+                                        (apply 'lingr-api-access-callback (append (list nil callback)
+                                                                                  cbargs) ))))))
           buffer)
-      (lingr-aif (url-retrieve-synchronously request-url)
-          (with-current-buffer it
-            (lingr-api-access-callback nil response-callback))))))
+      (let ((proc (apply #'call-process "wget" nil buffer nil wget-args)))
+        (with-current-buffer buffer
+          (lingr-api-access-callback nil callback cbargs))))))
 
 (defun lingr-api-access-callback (status func &rest args)
   (when (eq (car status) :error)
