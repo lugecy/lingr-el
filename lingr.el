@@ -112,10 +112,11 @@
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") 'lingr-status-switch-room)
     (define-key map (kbd "o") 'lingr-status-switch-room-other-window)
-    (define-key map (kbd "n") 'lingr-status-next-room)
-    (define-key map (kbd "p") 'lingr-status-previous-room)
+    (define-key map (kbd "n") 'lingr-room-next-message)
+    (define-key map (kbd "p") 'lingr-room-previous-message)
     (define-key map (kbd "j") 'lingr-status-next-room)
     (define-key map (kbd "k") 'lingr-status-previous-room)
+    (define-key map (kbd "f") 'lingr-status-jump-message)
     map)
   "Lingr status buffer map.")
 
@@ -602,10 +603,7 @@
     (let* ((timestamp (lingr-message-timestamp message))
            (roster (lingr-get-roster (lingr-message-room message)))
            (unread (assoc 'unread roster)))
-      (setcdr unread (cons (format "%s: unread message from %s"
-                                   (lingr-decode-timestamp (lingr-message-timestamp message))
-                                   (lingr-message-nick message))
-                           (cdr unread))))))
+      (setcdr unread (cons message (cdr unread))))))
 
 (defun lingr-update-status-buffer ()
   (let ((status-buffer (get-buffer-create lingr-status-buffer)))
@@ -625,8 +623,13 @@
                                 (length online-members)
                                 (mapconcat (lambda (m) (lingr-member-name m))
                                            online-members ", ")
-                                (propertize (mapconcat 'identity (reverse (lingr-roster-unread roster)) "\n")
-                                            'face 'lingr-status-unread-face)))))
+                                (mapconcat (lambda (message)
+                                             (propertize (format "%s: unread message from %s"
+                                                                 (lingr-decode-timestamp (lingr-message-timestamp message))
+                                                                 (lingr-message-nick message))
+                                                         'face 'lingr-status-unread-face
+                                                         'message-id (lingr-message-id message)))
+                                           (reverse (lingr-roster-unread roster)) "\n")))))
         (unless lingr-observe-buffer
           (insert (propertize "Lingr observer is Dead!!!\n" 'face '(:foreground "Red")))))
       (setq buffer-read-only t)
@@ -679,6 +682,18 @@
                     (point-min)
                   nil)
               prev))))))))
+
+(defun lingr-status-jump-message ()
+  (interactive)
+  (let ((mes-id (get-text-property (point) 'message-id))
+        (room-id (get-text-property (lingr-previous-property-pos 'lingr-room-id (point)) 'lingr-room-id)))
+    (when (and mes-id room-id)
+      (pop-to-buffer (lingr-get-room-buffer room-id))
+      (loop for pos = (lingr-previous-property-pos 'message-id (point-max))
+            then (lingr-previous-property-pos 'message-id pos)
+            while pos
+            if (equal (get-text-property pos 'message-id) mes-id)
+            do (goto-char pos) and return pos))))
 
 (defun lingr-presence-online ()
   (lingr-api-set-presence lingr-session-data "online"))
