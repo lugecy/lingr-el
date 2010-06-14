@@ -103,6 +103,8 @@
     (define-key map (kbd "S") 'lingr-show-status)
     (define-key map (kbd "j") 'lingr-room-next-nick)
     (define-key map (kbd "k") 'lingr-room-previous-nick)
+    (define-key map (kbd "n") 'lingr-room-next-message)
+    (define-key map (kbd "p") 'lingr-room-previous-message)
     map)
   "Lingr room mode map.")
 
@@ -507,20 +509,20 @@
     (setq time-str (propertize time-str 'face 'lingr-timestamp-face))
     (setq nick (propertize nick
                            'face 'lingr-nickname-face
-                           'lingr-mes-id (lingr-message-id message)
                            'nick nick))
 
     (unless (string-equal lingr-last-say-nick nick)
       (insert (format "%s%-20s %s\n"
                       (lingr-aif (and lingr-icon-mode
                                       (lingr-icon-image message))
-                          (propertize "_" 'display it 'lingr-mes-id (lingr-message-id message))
+                          (propertize "_" 'display it)
                         "")
                       nick time-str)))
-    (insert (concat fill-str
-                    (mapconcat 'identity (split-string text "\n")
-                               (concat "\n" fill-str))
-                    "\n"))
+    (insert (propertize (concat fill-str
+                                (mapconcat 'identity (split-string text "\n")
+                                           (concat "\n" fill-str))
+                                "\n")
+                        'message-id (lingr-message-id message)))
     (setq lingr-last-say-nick (lingr-message-nick message))))
 
 (defun lingr-regist-room-roster (roominfo)
@@ -710,6 +712,16 @@ Special commands:
   (lingr-aif (lingr-next-property-pos 'nick (point))
       (goto-char it)))
 
+(defun lingr-room-next-message ()
+  (interactive)
+  (lingr-aif (lingr-next-property-pos 'message-id (point))
+      (goto-char it)))
+
+(defun lingr-room-previous-message ()
+  (interactive)
+  (lingr-aif (lingr-previous-property-pos 'message-id (point))
+      (goto-char it)))
+
 (defun lingr-show-update-summay (updates)
   (lingr-aif (delete-dups (loop for (type room) in updates
                                 if (eq type 'message) collect room))
@@ -805,9 +817,9 @@ Special commands:
   (interactive "P")
   (when lingr-buffer-room-id
     (lingr-api-get-archives lingr-session-data lingr-buffer-room-id
-                            (lingr-aif (get-text-property (point-min) 'lingr-mes-id)
+                            (lingr-aif (get-text-property (point-min) 'message-id)
                                 it
-                              (get-text-property (next-single-property-change (point-min) 'lingr-mes-id) 'lingr-mes-id))
+                              (get-text-property (next-single-property-change (point-min) 'message-id) 'message-id))
                             (if (and (numberp limit) (> limit 0)) limit nil))))
 
 (defun lingr-refresh-room ()
