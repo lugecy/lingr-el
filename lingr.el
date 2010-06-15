@@ -244,23 +244,24 @@
           (lingr-api-access-callback nil callback cbargs))))))
 
 (defun lingr-api-access-callback (status func &rest args)
-  (when (eq (car status) :error)
-    (error "GET/POST fail."))
-  (goto-char (point-min))
-  (unless (looking-at "HTTP/")
-    (lingr-debug-observe-log (propertize "Lingr server not response." 'face '(:foreground "Red")))
-    (setq lingr-observe-buffer nil)
-    (lingr-update-status-buffer)
-    (error "Lingr server not response."))
-  (let ((json (lingr-get-json-data))
-        (buffer (current-buffer)))
-    (unless (equal (lingr-response-status json) "ok")
-      (lingr-debug-observe-log (list (propertize "Error" 'face '(:foreground "Red")) status func args json))
-      (setq lingr-observe-buffer nil)
-      (lingr-update-status-buffer)
-      (error "Lingr API Error: %s" json))
-    (kill-buffer buffer)
-    (apply func (cons json args))))
+  (unwind-protect
+      (progn
+        (when (eq (car status) :error)
+          (error "GET/POST fail."))
+        (goto-char (point-min))
+        (unless (looking-at "HTTP/")
+          (lingr-debug-observe-log (propertize "Lingr server not response." 'face '(:foreground "Red")))
+          (setq lingr-observe-buffer nil)
+          (error "Lingr server not response."))
+        (let ((json (lingr-get-json-data))
+              (buffer (current-buffer)))
+          (unless (equal (lingr-response-status json) "ok")
+            (lingr-debug-observe-log (list (propertize "Error" 'face '(:foreground "Red")) status func args json))
+            (setq lingr-observe-buffer nil)
+            (error "Lingr API Error: %s" json))
+          (kill-buffer buffer)
+          (apply func (cons json args))))
+    (lingr-update-status-buffer)))
 
 ;;;; Data struct access functions
 (defun lingr-session-id (session) (assoc-default 'session session))
@@ -376,7 +377,6 @@
   (setq lingr-http-response-json json)
   (when (lingr-current-session-p (car args))
     (lingr-refresh-rooms json)
-    (lingr-update-status-buffer)
     (lingr-aif (cadr args)
         (lingr-switch-room it)
       (lingr-show-status t))))
@@ -397,7 +397,6 @@
           (save-excursion
             (let ((updates (loop for event across it
                                  collect (lingr-update-by-event event))))
-              (lingr-update-status-buffer)
               (when lingr-show-update-notification
                 (lingr-show-update-summay updates))))))
     (setq lingr-observe-buffer nil)
@@ -448,6 +447,10 @@
   (cond ((lingr-event-message event) 'message)
         ((lingr-event-presence event) 'presence)
         (t nil)))
+
+(defun lingr-observe-alive ()
+  (and (buffer-live-p lingr-observe-buffer)
+       (get-buffer-process lingr-observe-buffer)))
 
 (defun lingr-get-room-buffer (room-id)
   (or (lingr-aif (lingr-roster-buffer (gethash room-id lingr-roster-table))
@@ -634,7 +637,7 @@
                                                          'face 'lingr-status-unread-face
                                                          'message-id (lingr-message-id message)))
                                            (reverse (lingr-roster-unread roster)) "\n")))))
-        (unless lingr-observe-buffer
+        (unless (lingr-observe-alive)
           (insert (propertize "Lingr observer is Dead!!!\n" 'face '(:foreground "Red")))))
       (setq buffer-read-only t)
       (use-local-map lingr-status-buffer-map))))
@@ -869,10 +872,6 @@ Special commands:
       (ignore-errors
         (insert (format "%s | %s\n" (format-time-string "%x %T") obj))
         (goto-char (point-max))))))
-
-(defun lingr-observe-alive ()
-  (and (buffer-live-p lingr-observe-buffer)
-       (get-buffer-process lingr-observe-buffer)))
 
 (defun lingr-observe-revive ()
   (interactive)
