@@ -700,7 +700,10 @@
             then (lingr-previous-property-pos 'message-id pos)
             while pos
             if (equal (get-text-property pos 'message-id) mes-id)
-            do (goto-char pos) and return pos))))
+            do (progn
+                 (goto-char pos)
+                 (lingr-remove-unread-status mes-id room-id))
+            and return pos))))
 
 (defun lingr-presence-online ()
   (lingr-api-set-presence lingr-session-data "online"))
@@ -737,12 +740,23 @@ Special commands:
 (defun lingr-room-next-message ()
   (interactive)
   (lingr-aif (lingr-next-property-pos 'message-id (point))
-      (goto-char it)))
+      (progn
+        (goto-char it)
+        (when lingr-buffer-room-id
+          (lingr-remove-unread-status (get-text-property it 'message-id) lingr-buffer-room-id)))))
 
 (defun lingr-room-previous-message ()
   (interactive)
   (lingr-aif (lingr-previous-property-pos 'message-id (point))
-      (goto-char it)))
+      (progn
+        (goto-char it)
+        (when lingr-buffer-room-id
+          (lingr-remove-unread-status (get-text-property it 'message-id) lingr-buffer-room-id)))))
+
+(defun lingr-remove-unread-status (mes-id room-id)
+  (let ((unread (assoc 'unread (lingr-get-roster room-id))))
+    (setcdr unread (remove-if (lambda (mes) (equal mes-id (lingr-message-id mes))) (cdr unread))))
+  (lingr-update-status-buffer))
 
 (defun lingr-show-update-summay (updates)
   (lingr-aif (delete-dups (loop for (type room) in updates
