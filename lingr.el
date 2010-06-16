@@ -164,7 +164,32 @@
 (defvar lingr-status-buffer "*Lingr Status*")
 (defvar lingr-get-before-limit 30)
 (defvar lingr-image-hash (make-hash-table :test 'equal)) ;; hash-table for caching image data
+(defvar lingr-image-requested-hash (make-hash-table :test 'equal))
 (defvar lingr-last-say-nick nil)
+(defvar lingr-error-icon-data-pair
+  '(xpm . "/* XPM */
+static char * yellow3_xpm[] = {
+\"16 16 2 1\",
+\" 	c None\",
+\".	c #FF0000\",
+\"................\",
+\".              .\",
+\". .          . .\",
+\".  .        .  .\",
+\".   .      .   .\",
+\".    .    .    .\",
+\".     .  .     .\",
+\".      ..      .\",
+\".      ..      .\",
+\".     .  .     .\",
+\".    .    .    .\",
+\".   .      .   .\",
+\".  .        .  .\",
+\". .          . .\",
+\".              .\",
+\"................\"};
+"))
+
 
 ;;;; Utility Macro
 (defmacro lingr-aif (test-form then-form &rest else-forms)
@@ -463,19 +488,25 @@
 
 (defun lingr-get-image (url)
   (or (gethash url lingr-image-hash)
-      (let ((buf (url-retrieve-synchronously url)))
-        (unwind-protect
-            (with-current-buffer buf
-              (goto-char (point-min))
-              (when (looking-at "HTTP/")
-                (let* ((type (when (re-search-forward  "Content-Type: image/\\(.+\\)" nil t)
-                               (intern (match-string 1))))
-                       (raw-data (when (and type (re-search-forward "\r?\n\r?\n" nil t))
-                                   (buffer-substring (point) (point-max))))
-                       (fixed-data-pair (and raw-data (lingr-convert-image-data raw-data type))))
-                  (and fixed-data-pair
-                       (puthash url (create-image (car fixed-data-pair) (cdr fixed-data-pair) t) lingr-image-hash)))))
-          (kill-buffer buf)))))
+      (gethash url lingr-image-requested-hash)
+      (let ((buf (url-retrieve url 'lingr-regist-icon-image (list url))))
+        (puthash url buf lingr-image-requested-hash))))
+
+(defun lingr-regist-icon-image (status &rest args)
+  (unwind-protect
+      (progn
+        (goto-char (point-min))
+        (when (looking-at "HTTP/")
+          (let* ((type (when (re-search-forward  "Content-Type: image/\\(.+\\)" nil t)
+                         (intern (match-string 1))))
+                 (raw-data (when (and type (re-search-forward "\r?\n\r?\n" nil t))
+                             (buffer-substring (point) (point-max))))
+                 (fixed-data-pair (and raw-data (lingr-convert-image-data raw-data type))))
+            (and fixed-data-pair
+                 (prog1
+                     (puthash (car args) (create-image (car fixed-data-pair) (cdr fixed-data-pair) t) lingr-image-hash)
+                   (remhash (car args) lingr-image-requested-hash))))))
+    (kill-buffer (current-buffer))))
 
 (defun lingr-convert-image-data (image-data src-type)
   (if (not (and lingr-image-convert-program
@@ -504,7 +535,11 @@
             nil))))))
 
 (defun lingr-icon-image (message)
-  (lingr-get-image (lingr-message-icon-url message)))
+  (let ((image (lingr-get-image (lingr-message-icon-url message))))
+    (cond ((eq (car-safe image) 'image) (propertize "_" 'display image))
+          ((buffer-live-p image)
+           (propertize "_" 'need-to-update (lingr-message-icon-url message)))
+          (t (propertize "_" 'display (create-image (cdr lingr-error-icon-data-pair) (car lingr-error-icon-data-pair) t))))))
 
 (defun lingr-decode-timestamp (timestamp)
   (format-time-string "[%x %T]" (apply 'encode-time (parse-time-string (timezone-make-date-arpa-standard timestamp)))))
@@ -521,9 +556,8 @@
 
     (unless (string-equal lingr-last-say-nick nick)
       (insert (format "%s%-20s %s\n"
-                      (lingr-aif (and lingr-icon-mode
-                                      (lingr-icon-image message))
-                          (propertize "_" 'display it)
+                      (if lingr-icon-mode
+                          (lingr-icon-image message)
                         "")
                       nick time-str)))
     (insert (propertize (concat fill-str
@@ -705,6 +739,15 @@
                  (lingr-remove-unread-status mes-id room-id))
             and return pos))))
 
+(defun lingr-room-update-icon ()
+  (interactive)
+  (let ((pos (point-max)))
+    (while (setq pos (lingr-previous-property-pos 'need-to-update pos))
+      (lingr-aif (gethash (get-text-property pos 'need-to-update) lingr-image-hash)
+          (let ((buffer-read-only nil))
+            (remove-text-properties pos (1+ pos) '(need-to-update nil))
+            (put-text-property pos (1+ pos) 'display it))))))
+
 (defun lingr-presence-online ()
   (lingr-api-set-presence lingr-session-data "online"))
 
@@ -841,6 +884,7 @@ Special commands:
                                       (lingr-get-room-id-list)
                                       nil t)))
   (funcall (if other-window 'pop-to-buffer 'switch-to-buffer) (lingr-get-room-buffer room-id))
+  (lingr-room-update-icon)
   (when lingr-clear-unread-on-visit
     (lingr-clear-roster-unread room-id)))
 
