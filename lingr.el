@@ -164,7 +164,7 @@
 (defvar lingr-status-buffer "*Lingr Status*")
 (defvar lingr-get-before-limit 30)
 (defvar lingr-image-hash (make-hash-table :test 'equal)) ;; hash-table for caching image data
-(defvar lingr-image-requested-hash (make-hash-table :test 'equal))
+(defvar lingr-image-request-queue nil)
 (defvar lingr-last-say-nick nil)
 (defvar lingr-error-icon-data-pair
   '(xpm . "/* XPM */
@@ -495,27 +495,35 @@ static char * yellow3_xpm[] = {
 
 (defun lingr-get-image (url)
   (or (gethash url lingr-image-hash)
-      (gethash url lingr-image-requested-hash)
-      (let ((buf (lingr-http-session "GET" url nil nil t (list url) 'lingr-regist-icon-image)))
-        (puthash url buf lingr-image-requested-hash))))
+      (member url lingr-image-request-queue)
+      (prog1
+        (push url lingr-image-request-queue)
+        (when (= (length lingr-image-request-queue) 1)
+          (lingr-http-get-icon-image url)))))
+
+(defun lingr-http-get-icon-image (url)
+  (lingr-http-session "GET" url nil nil t (list url) 'lingr-regist-icon-image))
 
 (defun lingr-regist-icon-image (status callback &rest args)
-  (when (and (goto-char (point-min)) (looking-at "HTTP/"))
-    (message "Lingr icon registering...")
-    (let* ((url (car args))
-           (type (when (re-search-forward  "Content-Type: image/\\([^\r\n]+\\)" nil t)
-                   (intern (match-string 1))))
-           (raw-data (when (and type (re-search-forward "\r?\n\r?\n" nil t))
-                       (buffer-substring (point) (point-max))))
-           (fixed-data-pair (and raw-data (lingr-convert-image-data raw-data type))))
-      (and fixed-data-pair
-           (prog1
-               (puthash url (create-image (car fixed-data-pair) (cdr fixed-data-pair) t) lingr-image-hash)
-             (remhash url lingr-image-requested-hash)
-             (dolist (room-id (lingr-get-room-id-list))
-               (lingr-room-update-icon (lingr-get-room-buffer room-id)))
-             (message "Lingr icon registering...Done.")))))
-  (kill-buffer (current-buffer)))
+  (let ((url (car args)))
+    (when (and (goto-char (point-min)) (looking-at "HTTP/"))
+      (message "Lingr icon registering...")
+      (let* ((type (when (re-search-forward  "Content-Type: image/\\([^\r\n]+\\)" nil t)
+                     (intern (match-string 1))))
+             (raw-data (when (and type (re-search-forward "\r?\n\r?\n" nil t))
+                         (buffer-substring (point) (point-max))))
+             (fixed-data-pair (and raw-data (lingr-convert-image-data raw-data type))))
+        (if fixed-data-pair
+            (prog1
+                (puthash url (create-image (car fixed-data-pair) (cdr fixed-data-pair) t) lingr-image-hash)
+              (dolist (room-id (lingr-get-room-id-list))
+                (lingr-room-update-icon (lingr-get-room-buffer room-id)))
+              (message "Lingr icon registering...Done."))
+          (puthash url 'convert-error lingr-image-hash))))
+    (kill-buffer (current-buffer))
+    (setq lingr-image-request-queue (delete url lingr-image-request-queue))
+    (when lingr-image-request-queue
+      (lingr-http-get-icon-image (car lingr-image-request-queue)))))
 
 (defun lingr-convert-image-data (image-data src-type)
   (if (not (and lingr-image-convert-program
@@ -546,9 +554,11 @@ static char * yellow3_xpm[] = {
 (defun lingr-icon-image (message)
   (let ((image (lingr-get-image (lingr-message-icon-url message))))
     (cond ((eq (car-safe image) 'image) (propertize "_" 'display image))
-          ((buffer-live-p image)
+          ((eq image 'convert-error)
+           (propertize "_" 'display (create-image (cdr lingr-error-icon-data-pair) (car lingr-error-icon-data-pair) t)))
+          (image
            (propertize "_" 'need-to-update (lingr-message-icon-url message)))
-          (t (propertize "_" 'display (create-image (cdr lingr-error-icon-data-pair) (car lingr-error-icon-data-pair) t))))))
+          (t ""))))
 
 (defun lingr-decode-timestamp (timestamp)
   (format-time-string "[%x %T]" (apply 'encode-time (parse-time-string (timezone-make-date-arpa-standard timestamp)))))
