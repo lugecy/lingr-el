@@ -501,6 +501,7 @@ static char * yellow3_xpm[] = {
 
 (defun lingr-regist-icon-image (status callback &rest args)
   (when (and (goto-char (point-min)) (looking-at "HTTP/"))
+    (message "Lingr icon registering...")
     (let* ((url (car args))
            (type (when (re-search-forward  "Content-Type: image/\\([^\r\n]+\\)" nil t)
                    (intern (match-string 1))))
@@ -512,7 +513,8 @@ static char * yellow3_xpm[] = {
                (puthash url (create-image (car fixed-data-pair) (cdr fixed-data-pair) t) lingr-image-hash)
              (remhash url lingr-image-requested-hash)
              (dolist (room-id (lingr-get-room-id-list))
-               (lingr-room-update-icon (lingr-get-room-buffer room-id)))))))
+               (lingr-room-update-icon (lingr-get-room-buffer room-id)))
+             (message "Lingr icon registering...Done.")))))
   (kill-buffer (current-buffer)))
 
 (defun lingr-convert-image-data (image-data src-type)
@@ -822,6 +824,7 @@ Special commands:
   (unless password (setq password lingr-password))
   (unless (and username password)
     (error "Empty username or password."))
+  (message "Lingr login...")
   (lingr-aif (lingr-api-session-create username password)
       (let* ((rooms (lingr-api-get-rooms it))
              (rooms-query (mapconcat 'identity rooms ",")))
@@ -829,7 +832,8 @@ Special commands:
           (lingr-api-subscribe it rooms-query)
           (lingr-api-room-show it rooms-query)
           (run-hooks 'lingr-connected-hook)
-          (lingr-api-observe it)))))
+          (lingr-api-observe it)
+          (message "Lingr login...Done.")))))
 
 (defun lingr-logout ()
   (interactive)
