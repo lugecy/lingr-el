@@ -505,7 +505,9 @@ static char * yellow3_xpm[] = {
             (and fixed-data-pair
                  (prog1
                      (puthash (car args) (create-image (car fixed-data-pair) (cdr fixed-data-pair) t) lingr-image-hash)
-                   (remhash (car args) lingr-image-requested-hash))))))
+                   (remhash (car args) lingr-image-requested-hash)
+                   (dolist (room-id (lingr-get-room-id-list))
+                     (lingr-room-update-icon (lingr-get-room-buffer room-id))))))))
     (kill-buffer (current-buffer))))
 
 (defun lingr-convert-image-data (image-data src-type)
@@ -739,14 +741,15 @@ static char * yellow3_xpm[] = {
                  (lingr-remove-unread-status mes-id room-id))
             and return pos))))
 
-(defun lingr-room-update-icon ()
+(defun lingr-room-update-icon (&optional buffer)
   (interactive)
-  (let ((pos (point-max)))
-    (while (setq pos (lingr-previous-property-pos 'need-to-update pos))
-      (lingr-aif (gethash (get-text-property pos 'need-to-update) lingr-image-hash)
-          (let ((buffer-read-only nil))
-            (remove-text-properties pos (1+ pos) '(need-to-update nil))
-            (put-text-property pos (1+ pos) 'display it))))))
+  (with-current-buffer (or buffer (current-buffer))
+    (let ((pos (point-max)))
+      (while (setq pos (lingr-previous-property-pos 'need-to-update pos))
+        (lingr-aif (gethash (get-text-property pos 'need-to-update) lingr-image-hash)
+            (let ((buffer-read-only nil))
+              (remove-text-properties pos (1+ pos) '(need-to-update nil))
+              (put-text-property pos (1+ pos) 'display it)))))))
 
 (defun lingr-presence-online ()
   (lingr-api-set-presence lingr-session-data "online"))
