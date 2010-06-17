@@ -214,7 +214,7 @@ static char * yellow3_xpm[] = {
                       args callback async cbargs))
 
 (defvar lingr-http-use-wget t)
-(defun lingr-http-session (method url args &optional callback async cbargs)
+(defun lingr-http-session (method url args &optional callback async cbargs request-callback)
   (let* ((data-string (mapconcat (lambda (arg)
                                    (concat (url-hexify-string (car arg))
                                            "="
@@ -222,7 +222,9 @@ static char * yellow3_xpm[] = {
                                  args
                                  "&"))
          (response-callback (or callback 'lingr-default-callback))
-         (request-url (if (string-equal method "GET")
+         (request-callback (or request-callback 'lingr-api-access-callback))
+         (request-url (if (and (string-equal method "GET")
+                               (> (length data-string) 0))
                           (concat url "?" data-string)
                         url))
          (url-request-method method)
@@ -231,9 +233,9 @@ static char * yellow3_xpm[] = {
                              data-string))
          (url-show-status lingr-url-show-status))
     (if lingr-http-use-wget
-        (lingr-http-session-use-wget request-url url-request-data response-callback async cbargs)
+        (lingr-http-session-use-wget request-url url-request-data response-callback async cbargs request-callback)
       (if async
-          (let ((buffer (url-retrieve request-url 'lingr-api-access-callback (append (list response-callback) cbargs))))
+          (let ((buffer (url-retrieve request-url request-callback (append (list response-callback) cbargs))))
             (when (buffer-live-p buffer)
               (with-current-buffer buffer
                 (set (make-local-variable 'url-show-status)
@@ -241,32 +243,37 @@ static char * yellow3_xpm[] = {
             buffer)
         (lingr-aif (url-retrieve-synchronously request-url)
             (with-current-buffer it
-              (lingr-api-access-callback nil response-callback)))))))
+              (funcall request-callback nil response-callback)))))))
 
-(defun lingr-http-session-use-wget (url post-data callback async cbargs)
+(defun lingr-http-session-use-wget (url post-data callback async cbargs req-callback)
   (let ((buffer (generate-new-buffer "*lingr-wget*"))
         (wget-args `("-q" "--save-headers" "-O-"
                      ,@(if (> (length post-data) 0)
                            (list "--post-data" post-data))
                      ,url)))
+    (with-current-buffer buffer
+      (set-buffer-multibyte nil)
+      (buffer-disable-undo)
+      (make-local-variable 'require-final-newline)
+      (setq require-final-newline nil))
     (if async
-        (let* ((proc (apply #'start-process "lingr-wget" buffer "wget" wget-args)))
+        (let* ((proc (let ((coding-system-for-read 'binary)
+                           (coding-system-for-write 'binary))
+                       (apply #'start-process "lingr-wget" buffer "wget" wget-args))))
           (set-process-sentinel proc
                                 (lexical-let ((callback callback)
-                                              (cbargs cbargs))
+                                              (cbargs cbargs)
+                                              (req-callback req-callback))
                                   (lambda (proc status)
-                                    (if (string-equal status "finished\n")
-                                        (with-current-buffer (process-buffer proc)
-                                          (apply 'lingr-api-access-callback (append (list nil callback)
-                                                                                    cbargs) ))
-                                      (lingr-debug-observe-log (format "%s %s: %s" (propertize "Lingr wget abnormaly finish." 'face '(:foreground "Red")) proc status))
-                                      (setq lingr-observe-buffer nil)
-                                      (lingr-update-status-buffer)
-                                      (error "Lingr wget abnormally exit:%s" status)))))
+                                    (with-current-buffer (process-buffer proc)
+                                      (apply req-callback (append (list nil callback)
+                                                                  cbargs) )))))
           buffer)
-      (let ((proc (apply #'call-process "wget" nil buffer nil wget-args)))
+      (let ((proc (let ((coding-system-for-read 'binary)
+                        (coding-system-for-write 'binary))
+                    (apply #'call-process "wget" nil buffer nil wget-args))))
         (with-current-buffer buffer
-          (lingr-api-access-callback nil callback cbargs))))))
+          (funcall req-callback nil callback cbargs))))))
 
 (defun lingr-api-access-callback (status func &rest args)
   (unwind-protect
@@ -458,7 +465,7 @@ static char * yellow3_xpm[] = {
 (defun lingr-get-json-data ()
   (save-excursion
     (goto-char (point-min))
-    (when (search-forward "\n\n" nil t)
+    (when (re-search-forward "\r?\n\r?\n" nil t)
       (let ((json-object-type 'alist) (json-array-type 'vector)
             (json-key-type nil) (json-false nil))
         (json-read-from-string
@@ -489,26 +496,24 @@ static char * yellow3_xpm[] = {
 (defun lingr-get-image (url)
   (or (gethash url lingr-image-hash)
       (gethash url lingr-image-requested-hash)
-      (let ((buf (url-retrieve url 'lingr-regist-icon-image (list url))))
+      (let ((buf (lingr-http-session "GET" url nil nil t (list url) 'lingr-regist-icon-image)))
         (puthash url buf lingr-image-requested-hash))))
 
-(defun lingr-regist-icon-image (status &rest args)
-  (unwind-protect
-      (progn
-        (goto-char (point-min))
-        (when (looking-at "HTTP/")
-          (let* ((type (when (re-search-forward  "Content-Type: image/\\(.+\\)" nil t)
-                         (intern (match-string 1))))
-                 (raw-data (when (and type (re-search-forward "\r?\n\r?\n" nil t))
-                             (buffer-substring (point) (point-max))))
-                 (fixed-data-pair (and raw-data (lingr-convert-image-data raw-data type))))
-            (and fixed-data-pair
-                 (prog1
-                     (puthash (car args) (create-image (car fixed-data-pair) (cdr fixed-data-pair) t) lingr-image-hash)
-                   (remhash (car args) lingr-image-requested-hash)
-                   (dolist (room-id (lingr-get-room-id-list))
-                     (lingr-room-update-icon (lingr-get-room-buffer room-id))))))))
-    (kill-buffer (current-buffer))))
+(defun lingr-regist-icon-image (status callback &rest args)
+  (when (and (goto-char (point-min)) (looking-at "HTTP/"))
+    (let* ((url (car args))
+           (type (when (re-search-forward  "Content-Type: image/\\([^\r\n]+\\)" nil t)
+                   (intern (match-string 1))))
+           (raw-data (when (and type (re-search-forward "\r?\n\r?\n" nil t))
+                       (buffer-substring (point) (point-max))))
+           (fixed-data-pair (and raw-data (lingr-convert-image-data raw-data type))))
+      (and fixed-data-pair
+           (prog1
+               (puthash url (create-image (car fixed-data-pair) (cdr fixed-data-pair) t) lingr-image-hash)
+             (remhash url lingr-image-requested-hash)
+             (dolist (room-id (lingr-get-room-id-list))
+               (lingr-room-update-icon (lingr-get-room-buffer room-id)))))))
+  (kill-buffer (current-buffer)))
 
 (defun lingr-convert-image-data (image-data src-type)
   (if (not (and lingr-image-convert-program
@@ -940,7 +945,9 @@ Special commands:
            (ignore-errors
              (lingr-api-session-verify (lingr-session-id lingr-session-data))
              t))
-      (lingr-api-observe lingr-session-data)
+      (progn
+        (lingr-api-observe lingr-session-data)
+        (lingr-update-status-buffer))
     (call-interactively 'lingr-login)))
 
 (provide 'lingr)
