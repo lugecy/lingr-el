@@ -1,11 +1,11 @@
-;; lingr.el --- Lingr Client for GNU Emacs
+;;; lingr.el --- Lingr Client for GNU Emacs
 
 ;; Copyright (C) 2010 lugecy <lugecy@gmail.com>
 
 ;; Author: lugecy <lugecy@gmail.com>
 ;; URL: http://github.com/lugecy/lingr-el
 ;; Keywords: chat, client, Internet
-;; Version: 0.1
+;; Version: 0.2
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@
 ;; You should have received a copy of the GNU General Public License
 ;; along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-;;; Commentary
+;;; Commentary:
 ;; Lingr (web chat service: http://lingr.com/) client for GNU Emacs
 
 ;;; Usage:
@@ -32,7 +32,7 @@
 
 ;;; Code:
 
-(eval-when-compile (require 'cl))
+(require 'cl)
 (require 'json)
 (require 'url)
 (require 'parse-time)
@@ -990,3 +990,4 @@ Special commands:
     (call-interactively 'lingr-login)))
 
 (provide 'lingr)
+;;; lingr.el ends here
