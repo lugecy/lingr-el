@@ -81,6 +81,16 @@
   :type 'integer
   :group 'lingr)
 
+(defcustom lingr-http-use-wget nil
+  "If non-nil, http-session use wget command."
+  :type 'boolean
+  :group 'lingr)
+
+(defcustom lingr-wget-program "wget"
+  "Program path for wget."
+  :type 'string
+  :group 'lingr)
+
 (defcustom lingr-auto-trigger-get-before-archive t
   "If non-nil, lingr-room-previous-nick command trigger get-before-archive in buffer head."
   :type 'boolean
@@ -213,7 +223,6 @@ static char * yellow3_xpm[] = {
   (lingr-http-session "POST" (concat lingr-base-url path)
                       args callback async cbargs))
 
-(defvar lingr-http-use-wget t)
 (defun lingr-http-session (method url args &optional callback async cbargs request-callback)
   (let* ((data-string (mapconcat (lambda (arg)
                                    (concat (url-hexify-string (car arg))
@@ -259,7 +268,7 @@ static char * yellow3_xpm[] = {
     (if async
         (let* ((proc (let ((coding-system-for-read 'binary)
                            (coding-system-for-write 'binary))
-                       (apply #'start-process "lingr-wget" buffer "wget" wget-args))))
+                       (apply #'start-process "lingr-wget" buffer lingr-wget-program wget-args))))
           (set-process-sentinel proc
                                 (lexical-let ((callback callback)
                                               (cbargs cbargs)
@@ -271,7 +280,7 @@ static char * yellow3_xpm[] = {
           buffer)
       (let ((proc (let ((coding-system-for-read 'binary)
                         (coding-system-for-write 'binary))
-                    (apply #'call-process "wget" nil buffer nil wget-args))))
+                    (apply #'call-process lingr-wget-program nil buffer nil wget-args))))
         (with-current-buffer buffer
           (funcall req-callback nil callback cbargs))))))
 
