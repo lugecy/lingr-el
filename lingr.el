@@ -798,13 +798,29 @@ Special commands:
 (defun lingr-room-next-nick ()
   (interactive)
   (lingr-aif (lingr-next-property-pos 'nick (point))
-      (goto-char it)))
+      (progn
+        (goto-char it)
+        (lingr-scroll-view-content it 'nick))))
+
+(defun lingr-scroll-view-content (now-pos property)
+  (let* ((next-content-pos (or (lingr-next-property-pos property now-pos) (point-max)))
+         (beginning-content-lastline-pos (point))
+         (content-height (save-excursion
+                           (let ((h 1))
+                             (while (and (eq (vertical-motion 1) 1)
+                                         (not (>= (point) next-content-pos)))
+                               (incf h)
+                               (setq beginning-content-lastline-pos (point)))
+                             h))))
+    (unless (pos-visible-in-window-p beginning-content-lastline-pos)
+      (recenter (if (< content-height (window-height)) (- content-height) 0)))))
 
 (defun lingr-room-next-message ()
   (interactive)
   (lingr-aif (lingr-next-property-pos 'message-id (point))
       (progn
         (goto-char it)
+        (lingr-scroll-view-content it 'message-id)
         (when lingr-buffer-room-id
           (lingr-remove-unread-status (get-text-property it 'message-id) lingr-buffer-room-id)))))
 
