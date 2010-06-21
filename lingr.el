@@ -806,10 +806,13 @@ Special commands:
 
 (defun lingr-room-next-nick ()
   (interactive)
-  (lingr-aif (lingr-next-property-pos 'nick (point))
-      (progn
-        (goto-char it)
-        (lingr-scroll-view-content it 'nick))))
+  (let ((pos (point)))
+    (lingr-aif (lingr-next-property-pos 'nick (point))
+        (progn
+          (goto-char it)
+          (lingr-scroll-view-content it 'nick)
+          (lingr-remove-unread-region pos (or (lingr-next-property-pos 'nick it)
+                                              (point-max)))))))
 
 (defun lingr-scroll-view-content (now-pos property)
   (let* ((next-content-pos (or (lingr-next-property-pos property now-pos) (point-max)))
@@ -842,9 +845,19 @@ Special commands:
           (lingr-remove-unread-status (get-text-property it 'message-id) lingr-buffer-room-id)))))
 
 (defun lingr-remove-unread-status (mes-id room-id)
-  (let ((unread (assoc 'unread (lingr-get-roster room-id))))
-    (setcdr unread (remove-if (lambda (mes) (equal mes-id (lingr-message-id mes))) (cdr unread))))
+  (let ((unread (assoc 'unread (lingr-get-roster room-id)))
+        (remove-id-list (if (listp mes-id) mes-id (list mes-id))))
+    (setcdr unread (remove-if (lambda (mes) (member (lingr-message-id mes) remove-id-list)) (cdr unread))))
   (lingr-update-status-buffer))
+
+(defun lingr-remove-unread-region (start end)
+  (when lingr-buffer-room-id
+    (let ((mes-id-list (loop with mes-id
+                             for pos = start then (lingr-next-property-pos 'message-id pos)
+                             while (and (integerp pos) (<= pos end))
+                             when (setq mes-id (get-text-property pos 'message-id))
+                             collect mes-id)))
+      (lingr-remove-unread-status mes-id-list lingr-buffer-room-id))))
 
 (defun lingr-show-update-summay (updates)
   (lingr-aif (delete-dups (loop for (type room) in updates
