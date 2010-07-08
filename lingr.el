@@ -808,11 +808,10 @@ Special commands:
   (interactive)
   (let ((pos (point)))
     (lingr-aif (lingr-next-property-pos 'nick (point))
-        (progn
-          (goto-char it)
-          (lingr-scroll-view-content it 'nick)
-          (lingr-remove-unread-region pos (or (lingr-next-property-pos 'nick it)
-                                              (point-max)))))))
+        (goto-char it))
+    (lingr-scroll-view-content (point) 'nick)
+    (lingr-remove-unread-region pos (or (lingr-next-property-pos 'nick (point))
+                                        (point-max)))))
 
 (defun lingr-scroll-view-content (now-pos property)
   (let* ((next-content-pos (or (lingr-next-property-pos property now-pos) (point-max)))
