@@ -210,28 +210,21 @@ static char * yellow3_xpm[] = {
      (if it ,then-form ,@else-forms)))
 
 ;;;; http access utility
-(defun lingr-http-get (path args &optional callback async cbargs)
-  "Send ARGS to PATH as a GET request."
-  (lingr-http-session "GET" (concat (if (string-equal path "event/observe")
-                                        lingr-observe-base-url
-                                      lingr-base-url)
-                                    path)
-                      args callback async cbargs))
+(defun lingr-http-get (url args callback &optional cbargs async)
+  "Send ARGS to URL as a GET request."
+  (lingr-http-session "GET" url args callback cbargs async))
 
-(defun lingr-http-post (path args &optional callback async cbargs)
-  "Send ARGS to PATH as a POST request."
-  (lingr-http-session "POST" (concat lingr-base-url path)
-                      args callback async cbargs))
+(defun lingr-http-post (url args callback &optional cbargs async)
+  "Send ARGS to URL as a POST request."
+  (lingr-http-session "POST" url args callback cbargs async))
 
-(defun lingr-http-session (method url args &optional callback async cbargs request-callback)
+(defun lingr-http-session (method url args callback &optional cbargs async)
   (let* ((data-string (mapconcat (lambda (arg)
                                    (concat (url-hexify-string (car arg))
                                            "="
                                            (url-hexify-string (cdr arg))))
                                  args
                                  "&"))
-         (response-callback (or callback 'lingr-default-callback))
-         (request-callback (or request-callback 'lingr-api-access-callback))
          (request-url (if (and (string-equal method "GET")
                                (> (length data-string) 0))
                           (concat url "?" data-string)
@@ -242,9 +235,9 @@ static char * yellow3_xpm[] = {
                              data-string))
          (url-show-status lingr-url-show-status))
     (if lingr-http-use-wget
-        (lingr-http-session-use-wget request-url url-request-data response-callback async cbargs request-callback)
+        (lingr-http-session-use-wget request-url url-request-data callback cbargs async)
       (if async
-          (let ((buffer (url-retrieve request-url request-callback (append (list response-callback) cbargs))))
+          (let ((buffer (url-retrieve request-url callback cbargs)))
             (when (buffer-live-p buffer)
               (with-current-buffer buffer
                 (set (make-local-variable 'url-show-status)
@@ -252,9 +245,9 @@ static char * yellow3_xpm[] = {
             buffer)
         (lingr-aif (url-retrieve-synchronously request-url)
             (with-current-buffer it
-              (funcall request-callback nil response-callback)))))))
+              (apply callback nil cbargs)))))))
 
-(defun lingr-http-session-use-wget (url post-data callback async cbargs req-callback)
+(defun lingr-http-session-use-wget (url post-data callback cbargs async)
   (let ((buffer (generate-new-buffer "*lingr-wget*"))
         (wget-args `("-q" "--save-headers" "-O-"
                      ,@(if (> (length post-data) 0)
@@ -271,18 +264,16 @@ static char * yellow3_xpm[] = {
                        (apply #'start-process "lingr-wget" buffer lingr-wget-program wget-args))))
           (set-process-sentinel proc
                                 (lexical-let ((callback callback)
-                                              (cbargs cbargs)
-                                              (req-callback req-callback))
+                                              (cbargs cbargs))
                                   (lambda (proc status)
                                     (with-current-buffer (process-buffer proc)
-                                      (apply req-callback (append (list nil callback)
-                                                                  cbargs) )))))
+                                      (apply callback nil cbargs)))))
           buffer)
       (let ((proc (let ((coding-system-for-read 'binary)
                         (coding-system-for-write 'binary))
                     (apply #'call-process lingr-wget-program nil buffer nil wget-args))))
         (with-current-buffer buffer
-          (funcall req-callback nil callback cbargs))))))
+          (apply callback nil cbargs))))))
 
 (defun lingr-api-access-callback (status func &rest args)
   (unwind-protect
@@ -344,60 +335,82 @@ static char * yellow3_xpm[] = {
 (defun lingr-presence-status (presence) (assoc-default 'status presence))
 
 ;;;; Lingr API functions
+(defun lingr-call-api (path args &optional callback cbargs error-handler)
+  (let ((api-callback (lexical-let ((callback (or callback 'lingr-default-callback))
+                                    (error-handler error-handler))
+                        (lambda (status &rest args)
+                          (condition-case e
+                              (apply 'lingr-api-access-callback status callback args)
+                            (error (when error-handler
+                                     (funcall error-handler))))))))
+    (cond ((string= path "event/observe")
+           (lingr-http-get (concat lingr-observe-base-url path) args api-callback cbargs t))
+          ((member path '("room/show" "room/get_archives"))
+           (lingr-http-get (concat lingr-base-url path) args api-callback cbargs t))
+          ((member path '("session/create" "session/verify" "user/get_rooms"))
+           (lingr-http-get (concat lingr-base-url path) args api-callback cbargs))
+          ((member path '("session/set_presence" "session/destroy"
+                          "room/subscribe" "room/unsubscribe" "room/say"))
+           (lingr-http-post (concat lingr-base-url path) args api-callback cbargs))
+          (t
+           (error "unsupport api call.")))))
+
 (defun lingr-api-session-create (user password)
-  (lingr-http-post "session/create"
+  (lingr-call-api "session/create"
                    `(("user" . ,user) ("password" . ,password))
                    (lambda (json &rest args) (setq lingr-session-data json))))
 
 (defun lingr-api-session-verify (session-id)
-  (lingr-http-get "session/verify"
+  (lingr-call-api "session/verify"
                   `(("session" . ,session-id))))
 
 (defun lingr-api-session-destroy (session)
   (lingr-aif (lingr-session-id session)
-      (lingr-http-post "session/destroy" `(("session" . ,it)))))
+      (lingr-call-api "session/destroy" `(("session" . ,it)) )))
 
 (defun lingr-api-set-presence (session presence)
   (lingr-aif (lingr-session-id session)
-      (lingr-http-post "session/set_presence"
+      (lingr-call-api "session/set_presence"
                        `(("session" . ,it) ("presence" . ,presence)
-                         ("nickname" . ,(lingr-session-nick session))))))
+                         ("nickname" . ,(lingr-session-nick session))) )))
 
 (defun lingr-api-get-rooms (session)
   (lingr-aif (lingr-session-id session)
-      (lingr-http-get "user/get_rooms" `(("session" . ,it))
+      (lingr-call-api "user/get_rooms" `(("session" . ,it))
                       (lambda (json &rest args) (lingr-response-rooms json)))))
 
 (defun lingr-api-room-show (session room)
   (lingr-aif (lingr-session-id session)
       (let ((single-p (not (string-match "," room))))
-        (lingr-http-get "room/show"
+        (lingr-call-api "room/show"
                         `(("session" . ,it) ("room" . ,room))
-                        'lingr-api-room-show-callback t (list it (if single-p room nil))))))
+                        'lingr-api-room-show-callback
+                        (list it (if single-p room nil))))))
 
 (defun lingr-api-get-archives (session room max_message_id &optional limit)
   (lingr-aif (lingr-session-id session)
       (setq lingr-get-archives-async-buffer
-            (lingr-http-get "room/get_archives"
+            (lingr-call-api "room/get_archives"
                             `(("session" . ,it) ("room" . ,room)
                               ("before" . ,max_message_id) ("limit" . ,(number-to-string (or limit lingr-get-before-limit))))
-                            'lingr-api-get-archives-callback t (list it room)))))
+                            'lingr-api-get-archives-callback
+                            (list it room)))))
 
 (defun lingr-api-subscribe (session room &optional reset)
   (lingr-aif (lingr-session-id session)
-      (lingr-http-post "room/subscribe"
+      (lingr-call-api "room/subscribe"
                        `(("session" . ,it) ("room" . ,room)
                          ("reset" . ,(or reset "true")))
                        'lingr-api-subscribe-callback)))
 
 (defun lingr-api-unsubscribe (session room)
   (lingr-aif (lingr-session-id session)
-      (lingr-http-post "room/unsubscribe"
+      (lingr-call-api "room/unsubscribe"
                        `(("session" . ,it) ("room" . ,room)))))
 
 (defun lingr-api-say (session room text)
   (lingr-aif (lingr-session-id session)
-      (lingr-http-post "room/say"
+      (lingr-call-api "room/say"
                        `(("session" . ,it) ("room" . ,room)
                          ("nickname" . ,(lingr-session-nick session))
                          ("text" . ,(encode-coding-string text 'utf-8))))))
@@ -406,9 +419,10 @@ static char * yellow3_xpm[] = {
   (lingr-aif (lingr-session-id session)
       (when lingr-subscribe-counter
         (setq lingr-observe-buffer
-              (lingr-http-get "event/observe"
+              (lingr-call-api "event/observe"
                               `(("session" . ,it) ("counter" . ,(number-to-string lingr-subscribe-counter)))
-                              'lingr-api-observe-callback t (list it lingr-subscribe-counter))))))
+                              'lingr-api-observe-callback
+                              (list it lingr-subscribe-counter))))))
 
 ;;;; Lingr API callback functions
 (defun lingr-default-callback (json &rest args)
@@ -511,9 +525,9 @@ static char * yellow3_xpm[] = {
           (lingr-http-get-icon-image url)))))
 
 (defun lingr-http-get-icon-image (url)
-  (lingr-http-session "GET" url nil nil t (list url) 'lingr-regist-icon-image))
+  (lingr-http-get url nil 'lingr-regist-icon-image (list url) t))
 
-(defun lingr-regist-icon-image (status callback &rest args)
+(defun lingr-regist-icon-image (status &rest args)
   (let ((url (car args)))
     (when (and (goto-char (point-min)) (looking-at "HTTP/"))
       (message "Lingr icon registering...")
