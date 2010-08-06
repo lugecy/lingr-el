@@ -530,8 +530,14 @@ static char * yellow3_xpm[] = {
   (loop for key being the hash-keys in lingr-roster-table using (hash-value roster)
         if (buffer-live-p (lingr-roster-buffer roster)) collect key))
 
+(defun lingr-get-icon-data (url)
+  (let ((image (gethash url lingr-image-hash)))
+    (cond ((eq (car-safe image) 'image) image)
+          ((eq image 'convert-error) (create-image (cdr lingr-error-icon-data-pair) (car lingr-error-icon-data-pair) t))
+          (t nil))))
+
 (defun lingr-get-image (url)
-  (or (gethash url lingr-image-hash)
+  (or (lingr-get-icon-data url)
       (member url lingr-image-request-queue)
       (prog1
         (push url lingr-image-request-queue)
@@ -551,12 +557,11 @@ static char * yellow3_xpm[] = {
                          (buffer-substring (point) (point-max))))
              (fixed-data-pair (and raw-data (lingr-convert-image-data raw-data type))))
         (if fixed-data-pair
-            (prog1
-                (puthash url (create-image (car fixed-data-pair) (cdr fixed-data-pair) t) lingr-image-hash)
-              (dolist (room-id (lingr-get-room-id-list))
-                (lingr-room-update-icon (lingr-get-room-buffer room-id)))
-              (message "Lingr icon registering...Done."))
-          (puthash url 'convert-error lingr-image-hash))))
+            (puthash url (create-image (car fixed-data-pair) (cdr fixed-data-pair) t) lingr-image-hash)
+          (puthash url 'convert-error lingr-image-hash))
+        (dolist (room-id (lingr-get-room-id-list))
+          (lingr-room-update-icon (lingr-get-room-buffer room-id)))
+        (message "Lingr icon registering...Done.")))
     (kill-buffer (current-buffer))
     (setq lingr-image-request-queue (delete url lingr-image-request-queue))
     (when lingr-image-request-queue
@@ -590,9 +595,8 @@ static char * yellow3_xpm[] = {
 
 (defun lingr-icon-image (message)
   (let ((image (lingr-get-image (lingr-message-icon-url message))))
-    (cond ((eq (car-safe image) 'image) (propertize "_" 'display image))
-          ((eq image 'convert-error)
-           (propertize "_" 'display (create-image (cdr lingr-error-icon-data-pair) (car lingr-error-icon-data-pair) t)))
+    (cond ((eq (car-safe image) 'image)
+           (propertize "_" 'display image))
           (image
            (propertize "_" 'need-to-update (lingr-message-icon-url message)))
           (t ""))))
@@ -804,7 +808,7 @@ static char * yellow3_xpm[] = {
   (with-current-buffer (or buffer (current-buffer))
     (let ((pos (point-max)))
       (while (setq pos (lingr-previous-property-pos 'need-to-update pos))
-        (lingr-aif (gethash (get-text-property pos 'need-to-update) lingr-image-hash)
+        (lingr-aif (lingr-get-icon-data (get-text-property pos 'need-to-update))
             (let ((buffer-read-only nil))
               (remove-text-properties pos (1+ pos) '(need-to-update nil))
               (put-text-property pos (1+ pos) 'display it)))))))
