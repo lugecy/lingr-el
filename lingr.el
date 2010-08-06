@@ -161,6 +161,7 @@
 (defvar lingr-observe-response nil)
 (defvar lingr-session-data nil)
 (defvar lingr-observe-buffer nil)
+(defvar lingr-observe-retry-timer nil)
 (defvar lingr-get-archives-async-buffer nil)
 (defvar lingr-logout-session-flg nil)
 (defvar lingr-subscribe-counter nil)
@@ -283,13 +284,11 @@ static char * yellow3_xpm[] = {
         (goto-char (point-min))
         (unless (looking-at "HTTP/")
           (lingr-debug-observe-log (propertize "Lingr server not response." 'face '(:foreground "Red")))
-          (setq lingr-observe-buffer nil)
           (error "Lingr server not response."))
         (let ((json (lingr-get-json-data))
               (buffer (current-buffer)))
           (unless (equal (lingr-response-status json) "ok")
             (lingr-debug-observe-log (format "%s %s" (propertize "Error" 'face '(:foreground "Red")) (list  status func args json)))
-            (setq lingr-observe-buffer nil)
             (error "Lingr API Error: %s" json))
           (kill-buffer buffer)
           (apply func (cons json args))))
@@ -422,7 +421,8 @@ static char * yellow3_xpm[] = {
               (lingr-call-api "event/observe"
                               `(("session" . ,it) ("counter" . ,(number-to-string lingr-subscribe-counter)))
                               'lingr-api-observe-callback
-                              (list it lingr-subscribe-counter))))))
+                              (list it lingr-subscribe-counter)
+                              'lingr-api-observe-error-handler)))))
 
 ;;;; Lingr API callback functions
 (defun lingr-default-callback (json &rest args)
@@ -455,8 +455,22 @@ static char * yellow3_xpm[] = {
               (when lingr-show-update-notification
                 (lingr-show-update-summay updates))))))
     (setq lingr-observe-buffer nil)
+    (when (timerp lingr-observe-retry-timer)
+      (cancel-timer lingr-observe-retry-timer)
+      (setq lingr-observe-retry-timer nil))
     (unless lingr-logout-session-flg
       (lingr-api-observe lingr-session-data))))
+
+(defun lingr-api-observe-error-handler ()
+  (message "Lingr observe error. Retry...")
+  (when (timerp lingr-observe-retry-timer)
+    (cancel-timer lingr-observe-retry-timer)
+    (setq lingr-observe-retry-timer nil))
+  (setq lingr-observe-retry-timer
+        (run-with-timer 60 nil 'lingr-api-observe lingr-session-data))
+  (when (buffer-live-p lingr-observe-buffer)
+    (kill-buffer lingr-observe-buffer))
+  (lingr-update-status-buffer))
 
 (defun lingr-api-get-archives-callback (json &rest args)
   (setq lingr-http-response-json json)
@@ -714,7 +728,11 @@ static char * yellow3_xpm[] = {
                                                          'message-id (lingr-message-id message)))
                                            (reverse (lingr-roster-unread roster)) "\n")))))
         (unless (lingr-observe-alive)
-          (insert (propertize "Lingr observer is Dead!!!\nPlease execute M-x lingr-observe-revive.\n" 'face '(:foreground "Red")))))
+          (insert (propertize (format "Lingr observer is Dead!!!\n%s\n"
+                                      (if lingr-observe-retry-timer
+                                          "Please Wait Connect Retry..."
+                                        "Please execute M-x lingr-observe-revive."))
+                              'face '(:foreground "Red")))))
       (setq buffer-read-only t)
       (use-local-map lingr-status-buffer-map))))
 
