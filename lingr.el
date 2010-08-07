@@ -340,8 +340,9 @@ static char * yellow3_xpm[] = {
                         (lambda (status &rest args)
                           (condition-case e
                               (apply 'lingr-api-access-callback status callback args)
-                            (error (when error-handler
-                                     (funcall error-handler))))))))
+                            (error (if error-handler
+                                       (funcall error-handler)
+                                     (error (error-message-string e)))))))))
     (cond ((string= path "event/observe")
            (lingr-http-get (concat lingr-observe-base-url path) args api-callback cbargs t))
           ((member path '("room/show" "room/get_archives"))
