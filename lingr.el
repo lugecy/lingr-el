@@ -607,25 +607,23 @@ static char * yellow3_xpm[] = {
 (defun lingr-insert-message (message)
   (let* ((nick (lingr-message-nick message))
          (text (lingr-message-text message))
-         (time-str (lingr-decode-timestamp (lingr-message-timestamp message)))
+         (timestamp (lingr-message-timestamp message))
+         (id (lingr-message-id message))
          (fill-str (make-string 2 ? )))
-    (setq time-str (propertize time-str 'face 'lingr-timestamp-face))
-    (setq nick (propertize nick
-                           'face 'lingr-nickname-face
-                           'nick nick))
-
     (unless (string-equal lingr-last-say-nick nick)
       (insert (format "%s%-20s %s\n"
                       (if lingr-icon-mode
                           (lingr-icon-image message)
                         "")
-                      nick time-str)))
+                      (propertize nick 'face 'lingr-nickname-face 'nick nick 'mes-separete t)
+                      (propertize (lingr-decode-timestamp timestamp) 'face 'lingr-timestamp-face))))
     (insert (propertize (concat fill-str
                                 (mapconcat 'identity (split-string text "\n")
                                            (concat "\n" fill-str))
                                 "\n")
-                        'message-id (lingr-message-id message)))
-    (setq lingr-last-say-nick (lingr-message-nick message))))
+                        'message-id id
+                        'timestamp timestamp))
+    (setq lingr-last-say-nick nick)))
 
 (defun lingr-regist-room-roster (roominfo)
   (let* ((room-id (assoc-default 'id roominfo))
@@ -716,11 +714,14 @@ static char * yellow3_xpm[] = {
               (let* ((members (lingr-roster-members roster))
                      (online-members (loop for (name . member) in members
                                            if (lingr-member-online-p member)
-                                           collect member)))
-                (insert (format "%s : %s online members\n%s\n%s\n\n"
+                                           collect member))
+                     (last-mes-timestamp (with-current-buffer (lingr-roster-buffer roster)
+                                           (get-text-property (lingr-previous-property-pos 'message-id (point-max)) 'timestamp))))
+                (insert (format "%s\nLast Message %s / %s online members\n%s\n%s\n\n"
                                 (propertize (lingr-roster-name roster)
                                             'lingr-room-id (lingr-roster-id roster)
                                             'face 'lingr-status-room-face)
+                                (lingr-decode-timestamp last-mes-timestamp)
                                 (length online-members)
                                 (mapconcat (lambda (m) (lingr-member-name m))
                                            online-members ", ")
