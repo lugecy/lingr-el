@@ -902,6 +902,7 @@ Special commands:
       (message "Lingr update message in %s." (mapconcat 'identity it ","))))
 
 ;;;; Interactive functions
+;;;###autoload
 (defun lingr-login (&optional username password)
   (interactive (list (or lingr-username (read-from-minibuffer "Username: "))
                      (or lingr-password (read-passwd "Password: "))))
